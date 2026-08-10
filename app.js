@@ -251,8 +251,9 @@
 
         /* distance */
         var distNM = 0;
-        if (ap.icao !== code) {
-          var srcAp = _airports ? _airports[code] : null;
+        var enteredIcao = (_iata2icao && _iata2icao[code]) ? _iata2icao[code] : code;
+        if (ap.icao !== enteredIcao) {
+          var srcAp = _airports ? _airports[enteredIcao] : null;
           if (srcAp) distNM = kmToNM(haversineKm(srcAp.lat, srcAp.lon, st.lat, st.lon));
         }
 
