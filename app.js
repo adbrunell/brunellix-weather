@@ -1,91 +1,103 @@
-/* ═══════════════════════════════════════════════════════════════
-   BrunelliX Weather — app.js
-   Airport climatology analysis engine
-   ═══════════════════════════════════════════════════════════════ */
-
+/* BrunelliX Weather — app.js  v2  */
 (function () {
   'use strict';
 
-  /* ═══ CONFIG ═══ */
   var GITHUB_RAW = 'https://raw.githubusercontent.com/adbrunell/brunellix-weather/main/data';
-  var IEM_ASOS = 'https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py';
+  var IEM_ASOS   = 'https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py';
   var IEM_GEOJSON = 'https://mesonet.agron.iastate.edu/geojson/network';
-  var CACHE_DB = 'iem_cache';
-  var CACHE_STORE = 'observations';
-  var CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
-  var CACHE_AIRPORTS_TTL = 3 * 24 * 60 * 60 * 1000;
-  var DEBOUNCE_MS = 300;
+  var CACHE_DB = 'iem_cache_v2';
+  var CACHE_STORE = 'obs';
 
-  /* ═══ DOM refs ═══ */
+  /* state */
+  var _airports = null, _iata2icao = null, _pending = false;
+  var _grid = null, _rows = [];
+
+  /* DOM */
   function $(id) { return document.getElementById(id); }
 
-  /* ═══ State ═══ */
-  var _airports = null;
-  var _iata2icao = null;
-  var _currentStation = null;
-  var _rawRows = null;
-  var _lastQueryIcao = '';
-  var _debounce = 0;
-  var _downloading = false;
-
-  /* ═══ Year range (auto) ═══ */
-  function getYearRange() {
-    var now = new Date();
-    var y2 = now.getFullYear() - 1;
-    var y1 = y2 - 5;
-    return { y1: y1, y2: y2 };
+  /* year range */
+  function yearRange() {
+    var y2 = new Date().getFullYear() - 1;
+    return { y1: y2 - 4, y2: y2 };
   }
-  function formatYearRange() {
-    var y = getYearRange();
-    return y.y1 + '\u2013' + y.y2;
-  }
-  $('year-info').innerHTML = 'Analyzing <strong>' + formatYearRange() + '</strong> (last 5 complete years, auto)';
 
-  /* ═══ IndexedDB ═══ */
-  function openCache() {
+  /* parse time H:MM → minutes */
+  function parseTime(s) {
+    s = String(s).trim();
+    var m = s.match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return null;
+    var h = parseInt(m[1], 10), min = parseInt(m[2], 10);
+    if (h < 0 || h > 23 || min < 0 || min > 59) return null;
+    return h * 60 + min;
+  }
+  function fmtTime(minutes) {
+    var h = Math.floor(minutes / 60), m = minutes % 60;
+    return h + ':' + (m < 10 ? '0' : '') + m;
+  }
+
+  /* hemispheres */
+  function seasonMonths(lat) {
+    if (lat < 0) return {
+      sum: [12, 1, 2], aut: [3, 4, 5], win: [6, 7, 8], spr: [9, 10, 11]
+    };
+    return {
+      sum: [6, 7, 8], aut: [9, 10, 11], win: [12, 1, 2], spr: [3, 4, 5]
+    };
+  }
+
+  /* distance haversine (km) */
+  function haversineKm(lat1, lon1, lat2, lon2) {
+    var R = 6371;
+    var dLat = (lat2 - lat1) * Math.PI / 180;
+    var dLon = (lon2 - lon1) * Math.PI / 180;
+    var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+  function kmToNM(km) { return km * 0.539957; }
+
+  /* IndexedDB */
+  function openDB() {
     return new Promise(function (resolve, reject) {
       var req = indexedDB.open(CACHE_DB, 1);
       req.onupgradeneeded = function (e) {
         if (!e.target.result.objectStoreNames.contains(CACHE_STORE)) {
-          e.target.result.createObjectStore(CACHE_STORE, { keyPath: 'key' });
+          e.target.result.createObjectStore(CACHE_STORE, { keyPath: 'k' });
         }
       };
       req.onsuccess = function () { resolve(req.result); };
       req.onerror = function () { reject(req.error); };
     });
   }
-  function getCached(key) {
-    return openCache().then(function (db) {
+  function cachedGet(key) {
+    return openDB().then(function (db) {
       return new Promise(function (resolve) {
         var tx = db.transaction(CACHE_STORE, 'readonly');
-        var req = tx.objectStore(CACHE_STORE).get(key);
-        req.onsuccess = function () {
-          var r = req.result;
-          if (r && (Date.now() - r.ts) < CACHE_TTL) resolve(r.csv);
-          else resolve(null);
+        var r = tx.objectStore(CACHE_STORE).get(key);
+        r.onsuccess = function () {
+          var v = r.result;
+          resolve(v && (Date.now() - v.ts < 7 * 864e5) ? v.csv : null);
         };
-        req.onerror = function () { resolve(null); };
+        r.onerror = function () { resolve(null); };
       });
     }).catch(function () { return null; });
   }
-  function setCached(key, csv) {
-    return openCache().then(function (db) {
+  function cachedSet(key, csv) {
+    return openDB().then(function (db) {
       return new Promise(function (resolve) {
         var tx = db.transaction(CACHE_STORE, 'readwrite');
-        tx.objectStore(CACHE_STORE).put({ key: key, csv: csv, ts: Date.now() });
+        tx.objectStore(CACHE_STORE).put({ k: key, csv: csv, ts: Date.now() });
         tx.oncomplete = function () { resolve(); };
       });
     }).catch(function () {});
   }
 
-  /* ═══ Airport Resolver (ourairports + IEM fallback) ═══ */
+  /* airports loading */
   function loadAirports() {
-    if (_airports) {
-      if (Date.now() - _airports._ts < CACHE_AIRPORTS_TTL) return Promise.resolve();
-      _airports = null;
-    }
-    var key = 'airports_json_v1';
-    return getCached(key).then(function (cached) {
+    if (_airports) return Promise.resolve();
+    var key = 'ap_v2';
+    return cachedGet(key).then(function (cached) {
       if (cached) {
         try { var d = JSON.parse(cached); _airports = d.airports; _iata2icao = d.iata; } catch (e) {}
       }
@@ -93,10 +105,9 @@
       return Promise.all([
         fetch(GITHUB_RAW + '/airports.json').then(function (r) { return r.ok ? r.json() : {}; }).catch(function () { return {}; }),
         fetch(GITHUB_RAW + '/iata2icao.json').then(function (r) { return r.ok ? r.json() : {}; }).catch(function () { return {}; })
-      ]).then(function (results) {
-        _airports = results[0]; _iata2icao = results[1];
-        _airports._ts = Date.now();
-        setCached(key, JSON.stringify({ airports: _airports, iata: _iata2icao }));
+      ]).then(function (r) {
+        _airports = r[0]; _iata2icao = r[1];
+        cachedSet(key, JSON.stringify({ airports: _airports, iata: _iata2icao }));
       });
     }).catch(function () {});
   }
@@ -104,417 +115,216 @@
   function resolveAirport(code) {
     code = code.trim().toUpperCase();
     if (!code) return Promise.resolve(null);
-
     return loadAirports().then(function () {
       if (_airports && _airports[code]) return { icao: code, data: _airports[code] };
-
       if (_iata2icao && _iata2icao[code]) {
         var icao = _iata2icao[code];
         if (_airports && _airports[icao]) return { icao: icao, data: _airports[icao] };
         code = icao;
       }
-
-      return resolveFromIEM(code);
+      return resolveIEM(code);
     });
   }
 
-  function resolveFromIEM(icao) {
-    var network = guessNetwork(icao);
-    return fetch(IEM_GEOJSON + '/' + network + '.geojson')
+  function resolveIEM(icao) {
+    var map = { SB:'BR__ASOS',SA:'AR__ASOS',SC:'CL__ASOS',SP:'PE__ASOS',SE:'EC__ASOS',SV:'VE__ASOS',K:'US_ASOS',PA:'US_ASOS',PH:'US_ASOS',EG:'GB__ASOS',LF:'FR__ASOS',LE:'ES__ASOS',ED:'DE__ASOS',LI:'IT__ASOS',LP:'PT__ASOS',EH:'NL__ASOS',LO:'AT__ASOS',LS:'CH__ASOS',RJ:'JP__ASOS',RK:'KR__ASOS',VT:'TH__ASOS',WM:'MY__ASOS',WI:'ID__ASOS',WS:'SG__ASOS',VH:'HK__ASOS',Y:'AU__ASOS',C:'CA__ASOS',M:'MX__ASOS' };
+    var net = map[icao.substring(0,2)] || map[icao.substring(0,1)] || 'BR__ASOS';
+    return fetch(IEM_GEOJSON + '/' + net + '.geojson')
       .then(function (r) { return r.ok ? r.json() : { features: [] }; })
       .then(function (geo) {
         var feat = geo.features.find(function (f) { return f.properties.sid === icao; });
-        if (feat) {
-          return {
-            icao: icao,
-            data: {
-              name: feat.properties.sname || icao,
-              iata: '', lat: feat.geometry.coordinates[1],
-              lon: feat.geometry.coordinates[0],
-              elev_m: feat.properties.elevation || 0,
-              network: network, archive_begin: feat.properties.archive_begin || '',
-              type: '', municipality: '', iso_country: ''
-            }
-          };
-        }
-        return null;
+        if (!feat) return null;
+        return { icao: icao, data: {
+          name: feat.properties.sname || icao, iata: '', lat: feat.geometry.coordinates[1],
+          lon: feat.geometry.coordinates[0], elev_m: feat.properties.elevation || 0,
+          network: net, archive_begin: feat.properties.archive_begin || '', type: '', municipality: '', iso_country: ''
+        }};
       }).catch(function () { return null; });
   }
 
-  function guessNetwork(icao) {
-    var p2 = icao.substring(0, 2), p1 = icao.substring(0, 1);
-    var map = {
-      SB: 'BR__ASOS', SA: 'AR__ASOS', SC: 'CL__ASOS', SP: 'PE__ASOS', SE: 'EC__ASOS', SV: 'VE__ASOS',
-      K: 'US_ASOS', PA: 'US_ASOS', PH: 'US_ASOS', EG: 'GB__ASOS', LF: 'FR__ASOS',
-      LE: 'ES__ASOS', ED: 'DE__ASOS', LI: 'IT__ASOS', LP: 'PT__ASOS',
-      EH: 'NL__ASOS', LO: 'AT__ASOS', LS: 'CH__ASOS', RJ: 'JP__ASOS', RK: 'KR__ASOS',
-      VT: 'TH__ASOS', WM: 'MY__ASOS', WI: 'ID__ASOS', WS: 'SG__ASOS',
-      VH: 'HK__ASOS', Y: 'AU__ASOS', C: 'CA__ASOS', M: 'MX__ASOS'
-    };
-    return map[p2] || map[p1] || 'BR__ASOS';
-  }
-
-  /* ═══ Data Fetcher ═══ */
-  function fetchStationData(station) {
-    var y = getYearRange();
-    var icao = station.icao;
-    var cacheKey = icao + '_' + y.y1 + '_' + y.y2;
-
-    return getCached(cacheKey).then(function (cached) {
-      if (cached) { showStationSource('cache'); return cached; }
-
-      return fetchFromGitHub(icao, y.y1, y.y2).then(function (csv) {
-        if (csv) { showStationSource('github'); return csv; }
-        return fetchFromIEM(station, y.y1, y.y2).then(function (csv) {
-          showStationSource('iem'); return csv;
-        });
-      }).then(function (csv) {
-        if (csv) setCached(cacheKey, csv);
-        return csv;
-      });
+  /* data fetch */
+  function fetchData(icao, network) {
+    var yr = yearRange();
+    var key = icao + '_' + yr.y1 + '_' + yr.y2;
+    return cachedGet(key).then(function (cached) {
+      if (cached) { statMsg('(cached)'); return cached; }
+      var net = network || 'BR__ASOS';
+      return fetch(IEM_ASOS + '?station=' + encodeURIComponent(icao) +
+        '&network=' + encodeURIComponent(net) +
+        '&data=tmpf,alti,mslp,drct,sknt,gust' +
+        '&year1=' + yr.y1 + '&month1=1&day1=1' +
+        '&year2=' + yr.y2 + '&month2=12&day2=31' +
+        '&report_type=3&tz=Etc/UTC&format=onlycomma')
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+        .then(function (csv) { cachedSet(key, csv); return csv; });
     });
   }
 
-  function fetchFromGitHub(icao, y1, y2) {
-    var promises = [];
-    for (var y = y1; y <= y2; y++) {
-      promises.push(
-        fetch(GITHUB_RAW + '/' + icao + '/' + y + '.csv')
-          .then(function (r) { return r.ok ? r.text() : ''; })
-          .catch(function () { return ''; })
-      );
-    }
-    return Promise.all(promises).then(function (chunks) {
-      var valid = chunks.filter(function (c) { return c && c.trim(); });
-      if (!valid.length) return null;
-      var header = valid[0].split('\n')[0];
-      var bodies = valid.map(function (c) {
-        var lines = c.split('\n');
-        return lines.slice(lines[0] === header ? 1 : 0).join('\n');
-      });
-      return header + '\n' + bodies.join('\n');
-    });
-  }
-
-  function fetchFromIEM(station, y1, y2) {
-    var sd = station && station.data;
-    if (!sd) return Promise.resolve(null);
-    return new Promise(function (resolve) {
-      var cols = 'tmpf,dwpf,alti,mslp,drct,sknt,gust';
-      var network = sd.network || 'BR__ASOS';
-      var url = IEM_ASOS + '?station=' + encodeURIComponent(station.icao) +
-        '&network=' + encodeURIComponent(network) +
-        '&data=' + cols +
-        '&year1=' + y1 + '&month1=1&day1=1' +
-        '&year2=' + y2 + '&month2=12&day2=31' +
-        '&report_type=3&tz=Etc/UTC&format=onlycomma';
-      fetch(url).then(function (r) {
-        if (!r.ok) throw new Error('IEM returned ' + r.status);
-        return r.text();
-      }).then(resolve).catch(function () { resolve(null); });
-    });
-  }
-
-  /* ═══ CSV Parser ═══ */
+  /* parse CSV → array of { month, minuteOfDay, tmpc, qnh } */
   function parseCSV(csv) {
     var lines = csv.trim().split('\n');
     if (lines.length < 2) return [];
-    var headers = lines[0].split(',').map(function (h) { return h.trim(); });
+    var hdr = lines[0].split(',').map(function (h) { return h.trim(); });
     return lines.slice(1).map(function (line) {
-      var vals = line.split(',');
-      var obj = {};
-      headers.forEach(function (h, i) { obj[h] = (vals[i] || '').trim(); });
-      return obj;
-    }).filter(function (r) { return r.valid && r.station; });
+      var v = line.split(',');
+      var t = (v[hdr.indexOf('valid')] || '').trim();
+      if (!t) return null;
+      var m = t.match(/\d{4}-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+      if (!m) return null;
+      var month = parseInt(m[1], 10), minute = parseInt(m[4], 10) * 60 + parseInt(m[5], 10);
+      var tf = parseFloat(v[hdr.indexOf('tmpf')]);
+      var al = parseFloat(v[hdr.indexOf('alti')]);
+      if (isNaN(tf) || isNaN(al)) return null;
+      return { month: month, min: minute, tmpc: (tf - 32) * 5 / 9, qnh: al * 33.8639 };
+    }).filter(function (r) { return r !== null; });
   }
 
-  /* ═══ Time Filter ═══ */
-  function filterByTime(rows, startHHMM, endHHMM) {
-    var s = startHHMM.split(':'), e = endHHMM.split(':');
-    var sH = parseInt(s[0], 10), sM = parseInt(s[1], 10);
-    var eH = parseInt(e[0], 10), eM = parseInt(e[1], 10);
-    var sMin = sH * 60 + sM, eMin = eH * 60 + eM;
-
+  /* filter by time range and months */
+  function filterObs(rows, minStart, minEnd, months) {
+    var mSet = {};
+    months.forEach(function (m) { mSet[m] = true; });
     return rows.filter(function (r) {
-      var m = r.valid.match(/(\d{2}):(\d{2})/);
-      if (!m) return false;
-      var min = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-      if (sMin <= eMin) return min >= sMin && min <= eMin;
-      return min >= sMin || min <= eMin;
+      if (!mSet[r.month]) return false;
+      if (minStart <= minEnd) return r.min >= minStart && r.min <= minEnd;
+      return r.min >= minStart || r.min <= minEnd;
     });
   }
 
-  /* ═══ Statistics Engine ═══ */
-  function computeStats(rows, reliability) {
-    var pct = reliability / 100;
-    var z = zScore(pct);
-
-    function extract(field, converter) {
-      return rows.map(function (r) {
-        var v = r[field];
-        if (!v || v === 'M') return NaN;
-        return converter ? converter(parseFloat(v)) : parseFloat(v);
-      }).filter(function (v) { return !isNaN(v); });
-    }
-
-    var tmpf = extract('tmpf');
-    var tmpc = tmpf.map(function (v) { return (v - 32) * 5 / 9; });
-    var altiIn = extract('alti');
-    var qnh = altiIn.map(function (v) { return v * 33.8639; });
-    var sknt = extract('sknt');
-    var gustRaw = extract('gust');
-    var drct = extract('drct');
-
-    function basicStats(arr) {
-      if (!arr.length) return { mu: NaN, sigma: NaN, n: 0, se: NaN, ci: [NaN, NaN], min: NaN, max: NaN };
-      var n = arr.length, mu = arr.reduce(function (s, v) { return s + v; }, 0) / n;
-      var sigma = Math.sqrt(arr.reduce(function (s, v) { return s + (v - mu) * (v - mu); }, 0) / n);
-      var se = sigma / Math.sqrt(n), ciLo = mu - z * se, ciHi = mu + z * se;
-      var min = arr[0], max = arr[0];
-      for (var i = 1; i < n; i++) { if (arr[i] < min) min = arr[i]; if (arr[i] > max) max = arr[i]; }
-      return { mu: mu, sigma: sigma, n: n, se: se, ci: [ciLo, ciHi], min: min, max: max };
-    }
-
-    function circularStats(degArr) {
-      if (!degArr.length) return { dir: NaN, R: NaN, n: 0, sector: '-' };
-      var n = degArr.length;
-      var rad = degArr.map(function (d) { return d * Math.PI / 180; });
-      var sinSum = rad.reduce(function (s, v) { return s + Math.sin(v); }, 0);
-      var cosSum = rad.reduce(function (s, v) { return s + Math.cos(v); }, 0);
-      var R = Math.sqrt(sinSum * sinSum + cosSum * cosSum) / n;
-      var dir = Math.atan2(sinSum, cosSum) * 180 / Math.PI;
-      if (dir < 0) dir += 360;
-      var secs = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
-      return { dir: dir, R: R, n: n, sector: secs[Math.round(dir / 22.5) % 16] };
-    }
-
-    var tStats = basicStats(tmpc);
-    var qStats = basicStats(qnh);
-    var wStats = basicStats(sknt);
-    var dStats = circularStats(drct);
-    var gustN = sknt.filter(function (v, i) { return !isNaN(v) && !isNaN(gustRaw[i]) && gustRaw[i] > 0; }).length;
-    var gustP = sknt.length ? (gustN / sknt.length * 100) : 0;
-
-    return {
-      temp: tStats, pressure: qStats, windSpeed: wStats,
-      windDir: dStats, gustP: gustP,
-      totalObs: rows.length, validObs: sknt.length,
-      z: z, reliability: reliability
-    };
+  /* statistics */
+  function stats(rows, reliability) {
+    if (!rows.length) return { temp: null, press: null, n: 0 };
+    var n = rows.length;
+    var tSum = 0, pSum = 0;
+    rows.forEach(function (r) { tSum += r.tmpc; pSum += r.qnh; });
+    return { temp: tSum / n, press: pSum / n, n: n };
   }
 
-  function zScore(pct) {
-    var tbl = { 0.50: 0, 0.55: 0.125, 0.60: 0.253, 0.65: 0.385, 0.70: 0.524, 0.75: 0.674, 0.80: 0.842, 0.85: 1.036, 0.90: 1.282, 0.95: 1.645, 0.99: 2.326, 0.995: 2.576 };
-    if (tbl[pct] !== undefined) return tbl[pct];
-    var keys = Object.keys(tbl).map(Number).sort();
-    var hi = keys.find(function (k) { return k >= pct; }) || 0.995;
-    var lo = keys[keys.indexOf(hi) - 1] || 0.50;
-    var t = (pct - lo) / (hi - lo);
-    return tbl[lo] + t * (tbl[hi] - tbl[lo]);
-  }
-
-  /* ═══ UI Controller ═══ */
-  function showStatus(type, msg) {
-    var bar = $('status-bar');
-    bar.className = 'status visible status-' + type;
-    $('status-text').textContent = msg;
-    $('status-spinner').style.display = (type === 'loading') ? '' : 'none';
-  }
-  function hideStatus() { $('status-bar').className = 'status'; }
-
-  function showStationSource(src) {
-    var el = $('st-source');
-    el.textContent = src === 'github' ? 'GitHub Archive' : src === 'iem' ? 'IEM Live' : 'Local Cache';
-    el.className = 'station-source ' + (src === 'github' ? 'source-github' : src === 'iem' ? 'source-iem' : 'source-cache');
-  }
-
-  function renderStationInfo(st) {
-    var d = st.data;
-    var icao = st.icao || '';
-    var name = d.name || '';
-    var lat = d.lat || 0, lon = d.lon || 0;
-    var elev = d.elev_m || d.elev_iem_m || 0;
-    var net = d.network || '';
-    var code = icao + (d.iata ? ' / ' + d.iata : '');
-    $('st-name').textContent = code + ' \u2014 ' + name;
-    var parts = ['Lat ' + lat.toFixed(2), 'Lon ' + lon.toFixed(2), 'Elev ' + elev + 'm'];
-    if (net) parts.push('Network ' + net);
-    if (d.type) parts.unshift(d.type.replace(/_/g, ' ').replace(/\b\w/g, function (l) { return l.toUpperCase(); }));
-    if (d.municipality) parts.unshift(d.municipality);
-    $('st-meta').textContent = parts.join(' | ');
-    $('station-info').classList.add('visible');
-  }
-
-  function renderStats(stats) {
-    $('results-wrap').classList.add('visible');
-    $('empty-state').classList.remove('visible');
-
-    var fmt = function (v, d) { return isNaN(v) ? '\u2014' : v.toFixed(d); };
-    var fmtCI = function (ci, d) { return isNaN(ci[0]) ? '\u2014' : fmt(ci[0], d) + ' \u2013 ' + fmt(ci[1], d); };
-
-    var gridData = [
-      { variable: 'Temperature', unit: '\u00B0C', mean: fmt(stats.temp.mu, 1), ci: fmtCI(stats.temp.ci, 1), min: fmt(stats.temp.min, 1), max: fmt(stats.temp.max, 1), n: stats.temp.n },
-      { variable: 'Pressure QNH', unit: 'hPa', mean: fmt(stats.pressure.mu, 1), ci: fmtCI(stats.pressure.ci, 1), min: fmt(stats.pressure.min, 1), max: fmt(stats.pressure.max, 1), n: stats.pressure.n },
-      { variable: 'Wind Direction', unit: '\u00B0', mean: fmt(stats.windDir.dir, 0) + ' (' + stats.windDir.sector + ')', ci: '\u2014', min: '\u2014', max: '\u2014', n: stats.windDir.n },
-      { variable: 'Wind Speed', unit: 'kt', mean: fmt(stats.windSpeed.mu, 1), ci: fmtCI(stats.windSpeed.ci, 1), min: fmt(stats.windSpeed.min, 1), max: fmt(stats.windSpeed.max, 1), n: stats.windSpeed.n },
-      { variable: 'Gust Prob.', unit: '%', mean: fmt(stats.gustP, 1), ci: '\u2014', min: '\u2014', max: '\u2014', n: stats.windSpeed.n }
-    ];
-
-    if (window._gridInstance) {
-      window._gridInstance.setData(gridData);
-    } else {
-      window._gridInstance = window.GRID.mount($('results-grid'), {
-        data: gridData,
-        columns: [
-          { key: 'variable', label: 'Variable', width: 140 },
-          { key: 'unit', label: 'Unit', width: 60 },
-          { key: 'mean', label: 'Mean \u03BC', width: 100 },
-          { key: 'ci', label: 'CI ' + stats.reliability + '%', width: 150 },
-          { key: 'min', label: 'Min', width: 70 },
-          { key: 'max', label: 'Max', width: 70 },
-          { key: 'n', label: 'N', width: 70 }
-        ],
-        height: 235,
-        readonly: true,
-        statusBar: false
-      });
+  /* display */
+  function statMsg(msg) {
+    var el = $('status-msg');
+    el.textContent = msg;
+    el.className = 'status-msg visible' + (msg.indexOf('fail') >= 0 || msg.indexOf('Error') >= 0 || msg.indexOf('not found') >= 0 ? ' error' : '');
+    if (msg.indexOf('fail') < 0 && msg.indexOf('Error') < 0 && msg.indexOf('not found') < 0 && msg.indexOf('Downloading') < 0) {
+      setTimeout(function () { el.className = 'status-msg'; }, 3000);
     }
   }
 
-  function esc(s) {
-    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
+  function search() {
+    if (_pending) return;
+    var code = $('inp-code').value.trim().toUpperCase();
+    var rel = parseInt($('inp-rel').value, 10) || 85;
+    var tStart = parseTime($('inp-start').value);
+    var tEnd = parseTime($('inp-end').value);
 
-  /* ═══ Recalculation ═══ */
-  function readParams() {
-    var t1h = pad2(parseInt($('t1h').value, 10) || 0);
-    var t1m = pad2(parseInt($('t1m').value, 10) || 0);
-    var t2h = pad2(parseInt($('t2h').value, 10) || 0);
-    var t2m = pad2(parseInt($('t2m').value, 10) || 0);
-    var reliability = parseInt($('reliability').value, 10) || 85;
-    return {
-      startTime: t1h + ':' + t1m,
-      endTime: t2h + ':' + t2m,
-      reliability: Math.max(50, Math.min(99, reliability))
-    };
-  }
+    if (!code) { statMsg('Enter an ICAO or IATA code'); return; }
+    if (tStart === null || tEnd === null) { statMsg('Invalid time format. Use H:MM (e.g. 0:00, 14:30)'); return; }
+    rel = Math.max(50, Math.min(99, rel));
+    $('inp-rel').value = rel;
 
-  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+    _pending = true;
+    $('btn-search').disabled = true;
+    statMsg('Resolving ' + code + '...');
 
-  function debouncedRecalc() {
-    clearTimeout(_debounce);
-    _debounce = setTimeout(recalc, DEBOUNCE_MS);
-  }
+    resolveAirport(code).then(function (ap) {
+      if (!ap) { statMsg('Airport "' + code + '" not found'); _pending = false; $('btn-search').disabled = false; return; }
+      var st = ap.data;
+      statMsg('Downloading ' + ap.icao + ' (' + yearRange().y1 + '-' + yearRange().y2 + ')...');
 
-  function recalc() {
-    if (!_rawRows || !_currentStation) return;
-    var p = readParams();
-    $('reliability').value = p.reliability;
-    $('reli-slider').value = p.reliability;
-    var filtered = filterByTime(_rawRows, p.startTime, p.endTime);
-    var stats = computeStats(filtered, p.reliability);
+      return fetchData(ap.icao, st.network).then(function (csv) {
+        if (!csv) { statMsg('No data for ' + ap.icao); _pending = false; $('btn-search').disabled = false; return; }
 
-    if (stats.validObs === 0) {
-      showStatus('warning', 'No observations found for ' + p.startTime + '\u2013' + p.endTime + ' UTC. Try a wider time range.');
-    } else {
-      hideStatus();
-    }
+        var allRows = parseCSV(csv);
+        if (!allRows.length) { statMsg('No valid observations for ' + ap.icao); _pending = false; $('btn-search').disabled = false; return; }
 
-    renderStats(stats);
-  }
+        var seas = seasonMonths(st.lat || 0);
+        var ann = filterObs(allRows, tStart, tEnd, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+        var sumObs = filterObs(allRows, tStart, tEnd, seas.sum);
+        var autObs = filterObs(allRows, tStart, tEnd, seas.aut);
+        var winObs = filterObs(allRows, tStart, tEnd, seas.win);
+        var sprObs = filterObs(allRows, tStart, tEnd, seas.spr);
 
-  function setLoading(loading) {
-    _downloading = loading;
-  }
+        var annS = stats(ann, rel);
+        var sumS = stats(sumObs, rel);
+        var autS = stats(autObs, rel);
+        var winS = stats(winObs, rel);
+        var sprS = stats(sprObs, rel);
 
-  /* ═══ Main query entry point ═══ */
-  function queryStation() {
-    var code = $('icao').value.trim();
-    if (!code) { $('empty-state').classList.add('visible'); return; }
-
-    resolveAirport(code).then(function (resolved) {
-      if (!resolved) {
-        showStatus('error', 'Airport \u201C' + code + '\u201D not found. Try an ICAO code like SBGL or IATA code like GIG.');
-        return;
-      }
-
-      var icao = resolved.icao;
-
-      if (icao === _lastQueryIcao && _rawRows) {
-        _currentStation = resolved;
-        renderStationInfo(resolved);
-        recalc();
-        return;
-      }
-
-      setLoading(true);
-      showStatus('loading', 'Downloading ' + icao + ' data (' + formatYearRange() + ')...');
-      $('station-info').classList.remove('visible');
-      $('results-wrap').classList.remove('visible');
-      if (window._gridInstance) window._gridInstance.setData([]);
-
-      return fetchStationData(resolved).then(function (csv) {
-        setLoading(false);
-        if (!csv) {
-          showStatus('error', 'No data available for ' + icao + '. The IEM archive may not have records for this station.');
-          return;
+        /* distance */
+        var distNM = 0;
+        if (ap.icao !== code) {
+          var srcAp = _airports ? _airports[code] : null;
+          if (srcAp) distNM = kmToNM(haversineKm(srcAp.lat, srcAp.lon, st.lat, st.lon));
         }
-        _rawRows = parseCSV(csv);
-        _currentStation = resolved;
-        _lastQueryIcao = icao;
-        renderStationInfo(resolved);
-        recalc();
+
+        var fmt = function (v) { return v === null || isNaN(v) ? '\u2014' : v.toFixed(1); };
+
+        var row = {
+          input: code,
+          reliability: rel + '%',
+          initial: fmtTime(tStart),
+          final: fmtTime(tEnd),
+          ann_temp: fmt(annS.temp), ann_press: fmt(annS.press),
+          sum_temp: fmt(sumS.temp), sum_press: fmt(sumS.press),
+          aut_temp: fmt(autS.temp), aut_press: fmt(autS.press),
+          win_temp: fmt(winS.temp), win_press: fmt(winS.press),
+          spr_temp: fmt(sprS.temp), spr_press: fmt(sprS.press),
+          station_id: ap.icao,
+          dist_nm: distNM.toFixed(0) + ' NM',
+          _n: annS.n
+        };
+
+        _rows.push(row);
+        _grid.setData(_rows);
+        statMsg('OK \u2014 ' + ap.icao + ' (' + annS.n + ' obs, ' + yearRange().y1 + '-' + yearRange().y2 + ')');
+        $('inp-code').value = '';
+        $('inp-code').focus();
+        _pending = false;
+        $('btn-search').disabled = false;
       });
     }).catch(function (err) {
-      setLoading(false);
-      showStatus('error', 'Failed: ' + (err.message || 'Unknown error'));
+      statMsg('Error: ' + (err.message || 'fetch failed'));
+      _pending = false;
+      $('btn-search').disabled = false;
     });
   }
 
-  /* ═══ Sync slider and number input ═══ */
-  function syncReliability() {
-    var r = parseInt($('reliability').value, 10) || 85;
-    r = Math.max(50, Math.min(99, r));
-    $('reliability').value = r;
-    $('reli-slider').value = r;
+  /* init grid once */
+  function initGrid() {
+    _grid = window.GRID.mount($('results-grid'), {
+      data: [],
+      columns: [
+        { key: 'input',        label: 'INPUT',       width: 62 },
+        { key: 'reliability',  label: 'RELIAB.',     width: 58 },
+        { key: 'initial',      label: 'INITIAL',     width: 58 },
+        { key: 'final',        label: 'FINAL',       width: 58 },
+        { key: 'ann_temp',     label: 'ANN T',       width: 62 },
+        { key: 'ann_press',    label: 'ANN P',       width: 65 },
+        { key: 'sum_temp',     label: 'SUM T',       width: 62 },
+        { key: 'sum_press',    label: 'SUM P',       width: 65 },
+        { key: 'aut_temp',     label: 'AUT T',       width: 62 },
+        { key: 'aut_press',    label: 'AUT P',       width: 65 },
+        { key: 'win_temp',     label: 'WIN T',       width: 62 },
+        { key: 'win_press',    label: 'WIN P',       width: 65 },
+        { key: 'spr_temp',     label: 'SPR T',       width: 62 },
+        { key: 'spr_press',    label: 'SPR P',       width: 65 },
+        { key: 'station_id',   label: 'ID',          width: 58 },
+        { key: 'dist_nm',      label: 'DIST NM',     width: 62 }
+      ],
+      height: 500,
+      readonly: true,
+      statusBar: false
+    });
   }
 
-  /* ═══ Event Wiring ═══ */
-  $('icao').addEventListener('input', function () {
-    this.value = this.value.toUpperCase();
-  });
-  $('icao').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('btn-search').click(); } });
+  /* events */
+  $('btn-search').addEventListener('click', search);
+  $('inp-code').addEventListener('input', function () { this.value = this.value.toUpperCase(); });
+  $('inp-code').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); search(); } });
+  $('inp-rel').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); search(); } });
+  $('inp-start').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); search(); } });
+  $('inp-end').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); search(); } });
 
-  $('btn-search').addEventListener('click', function () {
-    hideStatus();
-    queryStation();
-  });
-
-  $('t1h').addEventListener('input', function () { var v = parseInt(this.value, 10); if (!isNaN(v)) this.value = Math.max(0, Math.min(23, v)); debouncedRecalc(); });
-  $('t1m').addEventListener('input', function () { var v = parseInt(this.value, 10); if (!isNaN(v)) this.value = Math.max(0, Math.min(59, v)); debouncedRecalc(); });
-  $('t2h').addEventListener('input', function () { var v = parseInt(this.value, 10); if (!isNaN(v)) this.value = Math.max(0, Math.min(23, v)); debouncedRecalc(); });
-  $('t2m').addEventListener('input', function () { var v = parseInt(this.value, 10); if (!isNaN(v)) this.value = Math.max(0, Math.min(59, v)); debouncedRecalc(); });
-
-  /* Time input: auto-tab from HH to MM */
-  function wireTimeInput(hh, mm) {
-    hh.addEventListener('input', function () { if (this.value.length >= 2) mm.focus(); });
-  }
-  wireTimeInput($('t1h'), $('t1m'));
-  wireTimeInput($('t2h'), $('t2m'));
-
-  /* Reliability: slider + number sync */
-  $('reli-slider').addEventListener('input', function () {
-    $('reliability').value = this.value;
-    debouncedRecalc();
-  });
-  $('reliability').addEventListener('input', function () {
-    syncReliability();
-    debouncedRecalc();
-  });
-  $('reliability').addEventListener('change', function () { syncReliability(); });
-
-  /* ═══ Init ═══ */
+  initGrid();
   loadAirports();
-  syncReliability();
 
 })();
