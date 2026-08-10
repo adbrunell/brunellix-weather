@@ -6,7 +6,7 @@
 <meta name="description" content="Analyze historical airport weather data from IEM and OurAirports. Temperature, pressure, wind statistics by ICAO or IATA.">
 <meta name="robots" content="index, follow">
 <link rel="canonical" href="https://adbrunell.github.io/brunellix-weather/">
-<title>BrunelliX Weather — Aerodrome Climatology</title>
+<title>BrunelliX Weather ï¿½ Aerodrome Climatology</title>
 <link rel="stylesheet" href="grid-core.css">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -57,17 +57,11 @@ body{font-family:var(--font);font-size:.875rem;line-height:1.5;color:var(--text)
 .source-github{background:#e8f0fe;color:#174ea6}
 .source-iem{background:#fef7e0;color:#9a6d04}
 .source-cache{background:#e6f4ea;color:#137333}
-.results-wrap{display:none;flex-direction:column;gap:.75rem}
-.results-wrap.visible{display:flex}
-.mobile-cards{display:flex;flex-direction:column;gap:.5rem}
-@media (min-width:768px){.mobile-cards{display:none}}
-.data-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1rem 1.125rem}
-.data-card-label{font-size:.75rem;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em}
-.data-card-value{font-size:1.5rem;font-weight:700;font-family:var(--mono);margin-top:.125rem}
-.data-card-detail{font-size:.8125rem;color:var(--text-dim);margin-top:.125rem}
-.data-card-range{font-size:.75rem;color:var(--text-dim);margin-top:.25rem}
-.desktop-grid{display:none}
-@media (min-width:768px){.desktop-grid{display:block}}
+.results-wrap{display:none}
+.results-wrap.visible{display:block}
+.btn-search{height:2.75rem;padding:0 1rem;display:inline-flex;align-items:center;gap:0.375rem;font-size:0.9375rem;font-weight:600;font-family:var(--font);color:#fff;background:var(--accent);border:none;border-radius:var(--radius-sm);cursor:pointer;transition:background 0.15s,box-shadow 0.15s;outline:none;white-space:nowrap}
+.btn-search:hover{background:var(--accent-hover)}
+.btn-search:focus-visible{box-shadow:0 0 0 3px var(--accent-ring)}
 .empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:3rem 1rem;text-align:center;gap:.75rem}
 .empty-state.visible{display:flex}
 .empty-state svg{width:3rem;height:3rem;color:var(--text-dim);opacity:.5}
@@ -98,7 +92,13 @@ body{font-family:var(--font);font-size:.875rem;line-height:1.5;color:var(--text)
     <div class="form-row">
       <div class="form-field">
         <label for="icao">Airport code</label>
-        <input type="text" id="icao" class="icao-input" placeholder="SBGL" maxlength="4" autocomplete="off" spellcheck="false">
+        <div style="display:flex;gap:0.375rem">
+          <input type="text" id="icao" class="icao-input" placeholder="SBGL" maxlength="4" autocomplete="off" spellcheck="false">
+          <button type="button" class="btn-search" id="btn-search">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            Search
+          </button>
+        </div>
       </div>
       <div class="form-field">
         <label>Time range (UTC)</label>
@@ -143,8 +143,7 @@ body{font-family:var(--font);font-size:.875rem;line-height:1.5;color:var(--text)
   </div>
 
   <div class="results-wrap" id="results-wrap">
-    <div class="mobile-cards" id="mobile-cards"></div>
-    <div class="desktop-grid" id="desktop-grid"></div>
+    <div id="results-grid"></div>
   </div>
 
   <div class="empty-state visible" id="empty-state">

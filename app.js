@@ -105,15 +105,17 @@
     code = code.trim().toUpperCase();
     if (!code) return Promise.resolve(null);
 
-    if (_airports && _airports[code]) return Promise.resolve({ icao: code, data: _airports[code] });
+    return loadAirports().then(function () {
+      if (_airports && _airports[code]) return { icao: code, data: _airports[code] };
 
-    if (_iata2icao && _iata2icao[code]) {
-      var icao = _iata2icao[code];
-      if (_airports && _airports[icao]) return Promise.resolve({ icao: icao, data: _airports[icao] });
-      code = icao;
-    }
+      if (_iata2icao && _iata2icao[code]) {
+        var icao = _iata2icao[code];
+        if (_airports && _airports[icao]) return { icao: icao, data: _airports[icao] };
+        code = icao;
+      }
 
-    return resolveFromIEM(code);
+      return resolveFromIEM(code);
+    });
   }
 
   function resolveFromIEM(icao) {
@@ -350,19 +352,6 @@
     var fmt = function (v, d) { return isNaN(v) ? '\u2014' : v.toFixed(d); };
     var fmtCI = function (ci, d) { return isNaN(ci[0]) ? '\u2014' : fmt(ci[0], d) + ' \u2013 ' + fmt(ci[1], d); };
 
-    /* Mobile cards */
-    var cards = [
-      { label: 'Temperature (\u00B0C)', value: fmt(stats.temp.mu, 1), detail: 'CI ' + stats.reliability + '%: ' + fmtCI(stats.temp.ci, 1), range: 'Min ' + fmt(stats.temp.min, 1) + ' / Max ' + fmt(stats.temp.max, 1) },
-      { label: 'Pressure QNH (hPa)', value: fmt(stats.pressure.mu, 1), detail: 'CI ' + stats.reliability + '%: ' + fmtCI(stats.pressure.ci, 1), range: 'Min ' + fmt(stats.pressure.min, 1) + ' / Max ' + fmt(stats.pressure.max, 1) },
-      { label: 'Wind Direction', value: stats.windDir.sector + ' (' + fmt(stats.windDir.dir, 0) + '\u00B0)', detail: 'Mean resultant R=' + fmt(stats.windDir.R, 2), range: 'n=' + stats.windDir.n },
-      { label: 'Wind Speed (kt)', value: fmt(stats.windSpeed.mu, 1), detail: 'CI ' + stats.reliability + '%: ' + fmtCI(stats.windSpeed.ci, 1), range: 'Max ' + fmt(stats.windSpeed.max, 1) + ' kt' },
-      { label: 'Gust Probability', value: fmt(stats.gustP, 1) + '%', detail: stats.gustP > 30 ? 'Frequent gusts' : stats.gustP > 10 ? 'Occasional gusts' : 'Rare gusts', range: '' }
-    ];
-    $('mobile-cards').innerHTML = cards.map(function (c) {
-      return '<div class="data-card"><div class="data-card-label">' + esc(c.label) + '</div><div class="data-card-value">' + esc(c.value) + '</div><div class="data-card-detail">' + esc(c.detail) + '</div><div class="data-card-range">' + esc(c.range) + '</div></div>';
-    }).join('');
-
-    /* Desktop grid */
     var gridData = [
       { variable: 'Temperature', unit: '\u00B0C', mean: fmt(stats.temp.mu, 1), ci: fmtCI(stats.temp.ci, 1), min: fmt(stats.temp.min, 1), max: fmt(stats.temp.max, 1), n: stats.temp.n },
       { variable: 'Pressure QNH', unit: 'hPa', mean: fmt(stats.pressure.mu, 1), ci: fmtCI(stats.pressure.ci, 1), min: fmt(stats.pressure.min, 1), max: fmt(stats.pressure.max, 1), n: stats.pressure.n },
@@ -374,7 +363,7 @@
     if (window._gridInstance) {
       window._gridInstance.setData(gridData);
     } else {
-      window._gridInstance = window.GRID.mount($('desktop-grid'), {
+      window._gridInstance = window.GRID.mount($('results-grid'), {
         data: gridData,
         columns: [
           { key: 'variable', label: 'Variable', width: 140 },
@@ -385,7 +374,7 @@
           { key: 'max', label: 'Max', width: 70 },
           { key: 'n', label: 'N', width: 70 }
         ],
-        height: 220,
+        height: 235,
         readonly: true,
         statusBar: false
       });
@@ -462,7 +451,6 @@
       showStatus('loading', 'Downloading ' + icao + ' data (' + formatYearRange() + ')...');
       $('station-info').classList.remove('visible');
       $('results-wrap').classList.remove('visible');
-      $('mobile-cards').innerHTML = '';
       if (window._gridInstance) window._gridInstance.setData([]);
 
       return fetchStationData(resolved).then(function (csv) {
@@ -494,9 +482,13 @@
   /* ═══ Event Wiring ═══ */
   $('icao').addEventListener('input', function () {
     this.value = this.value.toUpperCase();
-    if (this.value.length >= 3) { clearTimeout(_debounce); _debounce = setTimeout(queryStation, 500); }
   });
-  $('icao').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); queryStation(); } });
+  $('icao').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); $('btn-search').click(); } });
+
+  $('btn-search').addEventListener('click', function () {
+    hideStatus();
+    queryStation();
+  });
 
   $('t1h').addEventListener('input', function () { var v = parseInt(this.value, 10); if (!isNaN(v)) this.value = Math.max(0, Math.min(23, v)); debouncedRecalc(); });
   $('t1m').addEventListener('input', function () { var v = parseInt(this.value, 10); if (!isNaN(v)) this.value = Math.max(0, Math.min(59, v)); debouncedRecalc(); });
