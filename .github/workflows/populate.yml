@@ -6,32 +6,127 @@ on:
   workflow_dispatch:
 
 jobs:
-  populate:
+  airports:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
+      - name: Download ourairports data
+        run: |
+          curl -f -s -S -L \
+            "https://davidmegginson.github.io/ourairports-data/airports.csv" \
+            -o /tmp/airports.csv
+
+      - name: Download IEM global station list
+        run: |
+          curl -f -s -S \
+            "https://mesonet.agron.iastate.edu/geojson/network/AZOS.geojson" \
+            -o /tmp/azos.geojson
+          sleep 1
+
+      - name: Build airports.json
+        run: |
+          python3 << 'PYEOF'
+          import csv, json
+
+          # Load IEM station IDs
+          with open("/tmp/azos.geojson") as f:
+              azos = json.load(f)
+          iem_stations = {}
+          for feat in azos.get("features", []):
+              p = feat.get("properties", {})
+              sid = p.get("sid", "")
+              if sid:
+                  iem_stations[sid] = {
+                      "network": p.get("network", ""),
+                      "archive_begin": p.get("archive_begin", ""),
+                      "elev_m": p.get("elevation", 0),
+                      "name_iem": p.get("sname", "")
+                  }
+
+          # Process ourairports
+          airports = {}
+          iata2icao = {}
+          with open("/tmp/airports.csv", newline="", encoding="utf-8") as f:
+              reader = csv.DictReader(f)
+              for row in reader:
+                  icao = (row.get("gps_code") or row.get("ident") or "").strip().upper()
+                  iata = (row.get("iata_code") or "").strip().upper()
+                  atype = (row.get("type") or "").strip()
+
+                  if not icao or len(icao) != 4:
+                      continue
+                  if icao not in iem_stations:
+                      continue
+                  if atype == "closed":
+                      continue
+
+                  lat = float(row.get("latitude_deg", 0) or 0)
+                  lon = float(row.get("longitude_deg", 0) or 0)
+                  elev_ft = float(row.get("elevation_ft", 0) or 0)
+                  elev_m = round(elev_ft * 0.3048)
+
+                  iem = iem_stations[icao]
+                  airports[icao] = {
+                      "name": row.get("name", icao),
+                      "iata": iata,
+                      "lat": lat,
+                      "lon": lon,
+                      "elev_m": elev_m,
+                      "type": atype,
+                      "municipality": row.get("municipality", ""),
+                      "iso_country": row.get("iso_country", ""),
+                      "network": iem.get("network", ""),
+                      "archive_begin": iem.get("archive_begin", ""),
+                      "elev_iem_m": iem.get("elev_m", 0)
+                  }
+                  if iata and len(iata) == 3:
+                      iata2icao[iata] = icao
+
+          with open("data/airports.json", "w", encoding="utf-8") as f:
+              json.dump(airports, f, ensure_ascii=False, separators=(",",":"))
+          with open("data/iata2icao.json", "w", encoding="utf-8") as f:
+              json.dump(iata2icao, f, ensure_ascii=False, separators=(",",":"))
+
+          print(f"Generated {len(airports)} airports, {len(iata2icao)} IATA mappings")
+          PYEOF
+
+      - name: Commit airports.json
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add data/airports.json data/iata2icao.json
+          git diff --staged --quiet || git commit -m "data: update airport catalog from ourairports [skip ci]"
+          git push
+
+  weather:
+    needs: airports
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: git pull origin main
+
       - name: Download missing station data
         run: |
           IEM="https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py"
-          ICAOS=$(jq -r '.[].icao' data/stations.json)
+          ICAOS=$(python3 -c "import json; print(' '.join(json.load(open('data/airports.json')).keys()))")
 
           for icao in $ICAOS; do
-            NETWORK=$(jq -r ".[] | select(.icao==\"$icao\") | .network" data/stations.json)
+            NETWORK=$(python3 -c "import json; print(json.load(open('data/airports.json')).get('$icao',{}).get('network',''))")
             for year in $(seq 2015 2025); do
               FILE="data/${icao}/${year}.csv"
               if [ ! -f "$FILE" ]; then
                 echo "Downloading ${icao} ${year}..."
                 mkdir -p "data/${icao}"
                 curl -f -s -S \
-                  "${IEM}?station=${icao}&data=tmpf,dwpf,alti,mslp,drct,sknt,gust&year1=${year}&month1=1&day1=1&year2=${year}&month2=12&day2=31&report_type=3&tz=Etc/UTC&format=onlycomma" \
+                  "${IEM}?station=${icao}&network=${NETWORK}&data=tmpf,dwpf,alti,mslp,drct,sknt,gust&year1=${year}&month1=1&day1=1&year2=${year}&month2=12&day2=31&report_type=3&tz=Etc/UTC&format=onlycomma" \
                   -o "$FILE" || echo "WARNING: ${icao} ${year} failed or empty"
                 sleep 1
               fi
             done
           done
 
-      - name: Commit and push
+      - name: Commit new weather data
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
