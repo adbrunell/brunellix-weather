@@ -21,3 +21,6 @@ __pycache__/
 
 # Logs
 *.log
+
+# Reference files
+Exemplo_*

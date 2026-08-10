@@ -9,55 +9,422 @@
 <title>BrunelliX Weather</title>
 <link rel="stylesheet" href="grid-core.css">
 <style>
-:root{--accent:#1a73e8;--border:#dadce0;--bg:#f8f9fa;--text:#202124;--text-dim:#5f6368;--radius:6px;--font:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;--mono:'SF Mono','Fira Code','Consolas',monospace}
+:root{--font:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;--mono:'SF Mono','Fira Code','Consolas',monospace}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-html{font-size:16px}
-body{font-family:var(--font);font-size:0.8125rem;color:var(--text);background:var(--bg);min-height:100vh;display:flex;flex-direction:column}
-.header{background:#fff;border-bottom:1px solid var(--border);padding:0 1rem;height:3rem;display:flex;align-items:center;gap:0.5rem}
-.header-logo{font-weight:700;font-size:1rem;color:var(--text)}
-.header-logo span{color:var(--accent)}
-.form-bar{display:flex;flex-wrap:wrap;align-items:flex-end;gap:0.375rem;padding:0.5rem 0.75rem;background:#fff;border-bottom:1px solid var(--border)}
-.form-bar label{font-size:0.6875rem;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.03em;display:block;margin-bottom:0.125rem}
-.form-bar input{height:2.25rem;padding:0 0.375rem;font-family:var(--mono);font-size:0.8125rem;border:1px solid var(--border);border-radius:var(--radius);outline:none}
-.form-bar input:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(26,115,232,0.2)}
-.inp-code{width:4.5rem;text-transform:uppercase;font-weight:600;letter-spacing:0.04em}
-.inp-pct{width:3rem;text-align:center}
-.inp-time{width:4rem;text-align:center}
-.btn-go{height:2.25rem;padding:0 0.875rem;font-size:0.8125rem;font-weight:600;font-family:var(--font);color:#fff;background:var(--accent);border:none;border-radius:var(--radius);cursor:pointer;white-space:nowrap}
-.btn-go:hover{background:#1557b0}
-.status-msg{padding:0.375rem 0.75rem;font-size:0.75rem;color:var(--text-dim);display:none}
-.status-msg.visible{display:block}
+html{font-size:16px;-webkit-text-size-adjust:100%}
+body{font-family:var(--font);font-size:0.8125rem;color:#202124;background:#f8f9fa;display:flex;flex-direction:column;min-height:100vh;min-height:100dvh}
+.header-bar{height:2.5rem;background:#fff;border-bottom:1px solid #dadce0;display:flex;align-items:center;padding:0 1rem;font-weight:700;font-size:0.9375rem;flex-shrink:0}
+.header-bar span{color:#1a73e8}
+
+.table-wrap{flex:1;overflow:auto;position:relative}
+
+/* custom header table */
+.hdr{width:max-content;min-width:100%;border-collapse:separate;border-spacing:0;position:sticky;top:0;z-index:20;background:#fff}
+.hdr th{border-bottom:1px solid #dadce0;border-right:1px solid #e8eaed;font-size:0.6875rem;font-weight:600;padding:0.25rem 0.375rem;text-align:center;white-space:nowrap;height:1.625rem;vertical-align:middle}
+.hdr .hdr-period th{height:1.75rem;font-size:0.75rem}
+.hdr .hdr-units th{font-weight:400;color:#5f6368;font-size:0.625rem;height:1.5rem}
+.hdr .hdr-row-num{width:50px;min-width:50px;max-width:50px;background:#f1f3f4;color:#5f6368;font-size:0.625rem}
+
+/* season colors - exact Excel colors */
+.hdr-summer{background:#FF0000!important;color:#fff!important}
+.hdr-autumn{background:#FFFF99!important;color:#202124!important}
+.hdr-spring{background:#FFCC66!important;color:#202124!important}
+.hdr-annual,.hdr-winter{background:#f1f3f4!important;color:#3c4043!important}
+.hdr-details{background:#f1f3f4!important;color:#3c4043!important}
+
+/* Gray input cells in grid */
+.rt-grid td[data-c="0"],.rt-grid td[data-c="1"],.rt-grid td[data-c="2"],.rt-grid td[data-c="3"]{background:#E8E8E8!important}
+.rt-grid td[data-c="0"].sel,.rt-grid td[data-c="1"].sel,.rt-grid td[data-c="2"].sel,.rt-grid td[data-c="3"].sel{background:rgba(26,115,232,0.15)!important}
+.rt-grid td[data-c="0"]{font-family:var(--mono);font-weight:600;text-transform:uppercase}
+.rt-grid td[data-c="1"]{text-align:center}
+
+/* hide grid thead — we use our own */
+.rt-grid thead{display:none}
+
+/* hide row number column in grid */
+.rt-grid th.rt-row-num,.rt-grid td.rt-row-num{display:none}
+
+/* hide scroll wrapper's own header spacer */
+.rt-grid .rt-scroll thead{display:none}
+
+/* fix grid table to not have sticky thead */
+.rt-grid thead{position:static!important}
+.rt-grid .rt-scroll thead{position:static!important}
+
+/* hide the filter bar etc that mount creates */
+.rt-find-bar,.rt-status,.rt-overlay{display:none!important}
+
+/* status message */
+.status-msg{height:1.5rem;line-height:1.5rem;padding:0 0.75rem;font-size:0.6875rem;color:#5f6368;background:#f1f3f4;border-top:1px solid #dadce0;flex-shrink:0}
 .status-msg.error{color:#d93025}
-.footer{padding:0.5rem 0.75rem;text-align:center;font-size:0.6875rem;color:var(--text-dim);border-top:1px solid var(--border);margin-top:auto}
-.footer a{color:var(--accent);text-decoration:none}
-.footer a:hover{text-decoration:underline}
-#results-grid{flex:1;min-height:0}
+
+.footer-msg{height:1.375rem;line-height:1.375rem;padding:0 0.75rem;text-align:center;font-size:0.625rem;color:#9aa0a6;border-top:1px solid #e8eaed;flex-shrink:0}
+.footer-msg a{color:#1a73e8;text-decoration:none}
 </style>
 </head>
 <body>
 
-<header class="header">
-  <div class="header-logo">BrunelliX <span>Weather</span></div>
-</header>
+<div class="header-bar">BrunelliX <span>Weather</span></div>
 
-<div class="form-bar">
-  <div><label>Code</label><input type="text" id="inp-code" class="inp-code" placeholder="SBKP" maxlength="4" autocomplete="off" spellcheck="false"></div>
-  <div><label>Reliab.</label><input type="number" id="inp-rel" class="inp-pct" value="85" min="50" max="99"></div>
-  <div><label>Start (UTC)</label><input type="text" id="inp-start" class="inp-time" value="0:00" placeholder="H:MM"></div>
-  <div><label>End (UTC)</label><input type="text" id="inp-end" class="inp-time" value="23:59" placeholder="H:MM"></div>
-  <button type="button" class="btn-go" id="btn-search">Search</button>
+<div class="table-wrap">
+  <!-- Period + Season headers -->
+  <table class="hdr">
+    <colgroup>
+      <col class="hdr-row-num">
+      <col style="width:72px"><col style="width:54px">
+      <col style="width:64px"><col style="width:64px">
+      <col style="width:62px"><col style="width:66px">
+      <col style="width:62px"><col style="width:66px">
+      <col style="width:62px"><col style="width:66px">
+      <col style="width:62px"><col style="width:66px">
+      <col style="width:62px"><col style="width:66px">
+      <col style="width:68px"><col style="width:72px">
+    </colgroup>
+    <thead>
+      <tr class="hdr-period">
+        <th class="hdr-row-num"></th>
+        <th></th><th></th>
+        <th colspan="2">PERIOD</th>
+        <th colspan="2" class="hdr-annual">ANNUAL</th>
+        <th colspan="2" class="hdr-summer">SUMMER</th>
+        <th colspan="2" class="hdr-autumn">AUTUMN</th>
+        <th colspan="2" class="hdr-winter">WINTER</th>
+        <th colspan="2" class="hdr-spring">SPRING</th>
+        <th colspan="2" class="hdr-details">STATION DETAILS</th>
+      </tr>
+      <tr>
+        <th class="hdr-row-num"></th>
+        <th>INPUT</th><th>RELIAB.</th><th>INITIAL</th><th>FINAL</th>
+        <th>TEMP</th><th>PRESS</th>
+        <th>TEMP</th><th>PRESS</th>
+        <th>TEMP</th><th>PRESS</th>
+        <th>TEMP</th><th>PRESS</th>
+        <th>TEMP</th><th>PRESS</th>
+        <th>ID</th><th>DIST NM</th>
+      </tr>
+      <tr class="hdr-units">
+        <th class="hdr-row-num"></th>
+        <th>[Apt Code]</th><th>[%]</th><th>HOUR</th><th>HOUR</th>
+        <th>[&deg;C]</th><th>[hPa]</th>
+        <th>[&deg;C]</th><th>[hPa]</th>
+        <th>[&deg;C]</th><th>[hPa]</th>
+        <th>[&deg;C]</th><th>[hPa]</th>
+        <th>[&deg;C]</th><th>[hPa]</th>
+        <th>ID</th><th>DIST [NM]</th>
+      </tr>
+    </thead>
+  </table>
+
+  <!-- Grid (thead hidden via CSS) -->
+  <div id="results-grid"></div>
 </div>
 
 <div class="status-msg" id="status-msg"></div>
-<div id="results-grid"></div>
-
-<footer class="footer">
+<div class="footer-msg">
   Airport data: <a href="https://ourairports.com" target="_blank" rel="noopener">OurAirports</a>
   &middot; Weather: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener">IEM</a>
   &middot; <a href="https://github.com/adbrunell/brunellix-weather" target="_blank" rel="noopener">GitHub</a>
-</footer>
+</div>
 
 <script src="grid-core.js"></script>
-<script src="app.js"></script>
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   BrunelliX Weather — app.js (inline)
+   ═══════════════════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+
+  var GITHUB_RAW = 'https://raw.githubusercontent.com/adbrunell/brunellix-weather/main/data';
+  var IEM_ASOS = 'https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py';
+  var IEM_GEOJSON = 'https://mesonet.agron.iastate.edu/geojson/network';
+
+  var _airports = null, _iata2icao = null, _grid = null;
+  var _rows = [];         // 25 rows
+  var _fetching = {};     // { rowIdx: true } — rows being fetched
+
+  for (var ri = 0; ri < 25; ri++) {
+    _rows.push({
+      input: '', rel: '85', tstart: '0:00', tend: '23:59',
+      at: '', ap: '', st: '', sp: '', autt: '', autp: '',
+      wt: '', wp: '', sprt: '', sprp: '',
+      id: '', dist: '', _ready: false
+    });
+  }
+
+  /* year range */
+  function yearRange() {
+    var y2 = new Date().getFullYear() - 1;
+    return { y1: y2 - 4, y2: y2 };
+  }
+
+  function statMsg(msg, isErr) {
+    var el = document.getElementById('status-msg');
+    el.textContent = msg;
+    el.className = 'status-msg' + (isErr ? ' error' : '');
+  }
+
+  /* IndexedDB */
+  function openDB() {
+    return new Promise(function (resolve, reject) {
+      var req = indexedDB.open('iem_cache_v3', 1);
+      req.onupgradeneeded = function (e) {
+        if (!e.target.result.objectStoreNames.contains('obs')) {
+          e.target.result.createObjectStore('obs', { keyPath: 'k' });
+        }
+      };
+      req.onsuccess = function () { resolve(req.result); };
+      req.onerror = function () { reject(req.error); };
+    });
+  }
+  function cachedGet(key) {
+    return openDB().then(function (db) {
+      return new Promise(function (resolve) {
+        var tx = db.transaction('obs', 'readonly');
+        var r = tx.objectStore('obs').get(key);
+        r.onsuccess = function () {
+          var v = r.result;
+          resolve(v && (Date.now() - v.ts < 7 * 864e5) ? v.csv : null);
+        };
+        r.onerror = function () { resolve(null); };
+      });
+    }).catch(function () { return null; });
+  }
+  function cachedSet(key, csv) {
+    return openDB().then(function (db) {
+      return new Promise(function (resolve) {
+        var tx = db.transaction('obs', 'readwrite');
+        tx.objectStore('obs').put({ k: key, csv: csv, ts: Date.now() });
+        tx.oncomplete = function () { resolve(); };
+      });
+    }).catch(function () {});
+  }
+
+  /* airports */
+  function loadAirports() {
+    if (_airports) return Promise.resolve();
+    return cachedGet('ap_v3').then(function (c) {
+      if (c) { try { var d = JSON.parse(c); _airports = d.a; _iata2icao = d.i; } catch (e) {} }
+      if (_airports) return;
+      return Promise.all([
+        fetch(GITHUB_RAW + '/airports.json').then(function (r) { return r.ok ? r.json() : {}; }).catch(function () { return {}; }),
+        fetch(GITHUB_RAW + '/iata2icao.json').then(function (r) { return r.ok ? r.json() : {}; }).catch(function () { return {}; })
+      ]).then(function (r) {
+        _airports = r[0]; _iata2icao = r[1];
+        cachedSet('ap_v3', JSON.stringify({ a: _airports, i: _iata2icao }));
+      });
+    }).catch(function () {});
+  }
+
+  function resolveAirport(code) {
+    code = String(code).trim().toUpperCase();
+    if (!code) return Promise.resolve(null);
+    return loadAirports().then(function () {
+      if (_airports && _airports[code]) return { icao: code, data: _airports[code] };
+      if (_iata2icao && _iata2icao[code]) {
+        var icao = _iata2icao[code];
+        if (_airports && _airports[icao]) return { icao: icao, data: _airports[icao] };
+        code = icao;
+      }
+      return resolveIEM(code);
+    });
+  }
+
+  function resolveIEM(icao) {
+    var m = { SB:'BR__ASOS',SA:'AR__ASOS',SC:'CL__ASOS',SP:'PE__ASOS',SE:'EC__ASOS',SV:'VE__ASOS',K:'US_ASOS',PA:'US_ASOS',EG:'GB__ASOS',LF:'FR__ASOS',LE:'ES__ASOS',ED:'DE__ASOS',LI:'IT__ASOS',LP:'PT__ASOS',EH:'NL__ASOS',LO:'AT__ASOS',LS:'CH__ASOS',RJ:'JP__ASOS',RK:'KR__ASOS',VT:'TH__ASOS',WM:'MY__ASOS',WI:'ID__ASOS',Y:'AU__ASOS',C:'CA__ASOS',M:'MX__ASOS' };
+    var net = m[icao.substring(0, 2)] || m[icao.substring(0, 1)] || 'BR__ASOS';
+    return fetch(IEM_GEOJSON + '/' + net + '.geojson')
+      .then(function (r) { return r.ok ? r.json() : { features: [] }; })
+      .then(function (geo) {
+        var f = geo.features.find(function (x) { return x.properties.sid === icao; });
+        if (!f) return null;
+        return { icao: icao, data: { name: f.properties.sname || icao, iata: '', lat: f.geometry.coordinates[1], lon: f.geometry.coordinates[0], elev_m: f.properties.elevation || 0, network: net }};
+      }).catch(function () { return null; });
+  }
+
+  /* data fetch */
+  function fetchData(icao, network) {
+    var yr = yearRange();
+    var key = icao + '_' + yr.y1;
+    return cachedGet(key).then(function (c) {
+      if (c) return c;
+      var net = network || 'BR__ASOS';
+      return fetch(IEM_ASOS + '?station=' + encodeURIComponent(icao) +
+        '&network=' + encodeURIComponent(net) +
+        '&data=tmpf,alti&year1=' + yr.y1 + '&month1=1&day1=1' +
+        '&year2=' + yr.y2 + '&month2=12&day2=31' +
+        '&report_type=3&tz=Etc/UTC&format=onlycomma')
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+        .then(function (csv) { cachedSet(key, csv); return csv; });
+    });
+  }
+
+  /* parse */
+  function parseCSV(csv) {
+    var lines = csv.trim().split('\n');
+    if (lines.length < 2) return [];
+    var hdr = lines[0].split(',').map(function (h) { return h.trim(); });
+    var ti = hdr.indexOf('tmpf'), ai = hdr.indexOf('alti');
+    return lines.slice(1).map(function (line) {
+      var v = line.split(',');
+      var ts = (v[1] || '').trim();
+      var m = ts.match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/); if (!m) return null;
+      var tf = parseFloat(v[ti]), al = parseFloat(v[ai]);
+      if (isNaN(tf) || isNaN(al)) return null;
+      return { month: parseInt(m[2], 10), min: parseInt(m[4], 10) * 60 + parseInt(m[5], 10), tmpc: (tf - 32) * 5 / 9, qnh: al * 33.8639 };
+    }).filter(function (r) { return r !== null; });
+  }
+
+  function seasonMonths(lat) {
+    if (lat < 0) return { sum: [12, 1, 2], aut: [3, 4, 5], win: [6, 7, 8], spr: [9, 10, 11] };
+    return { sum: [6, 7, 8], aut: [9, 10, 11], win: [12, 1, 2], spr: [3, 4, 5] };
+  }
+
+  function haversineKm(lat1, lon1, lat2, lon2) {
+    var R = 6371, dLat = (lat2 - lat1) * Math.PI / 180, dLon = (lon2 - lon1) * Math.PI / 180;
+    var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  function filterObs(rows, tStart, tEnd, months) {
+    var m = {}; months.forEach(function (x) { m[x] = true; });
+    return rows.filter(function (r) {
+      if (!m[r.month]) return false;
+      if (tStart <= tEnd) return r.min >= tStart && r.min <= tEnd;
+      return r.min >= tStart || r.min <= tEnd;
+    });
+  }
+
+  function avg(arr) {
+    if (!arr.length) return NaN;
+    return arr.reduce(function (s, v) { return s + v; }, 0) / arr.length;
+  }
+
+  /* process one row */
+  function processRow(r) {
+    var row = _rows[r];
+    var code = row.input.trim().toUpperCase();
+    if (!code || row._ready || _fetching[r]) return;
+    var rel = parseInt(row.rel, 10) || 85;
+    var tStart = parseTime(row.tstart);
+    var tEnd = parseTime(row.tend);
+    if (tStart === null || tEnd === null) return;
+
+    _fetching[r] = true;
+    statMsg('R' + (r + 1) + ': Resolving ' + code + '...');
+
+    resolveAirport(code).then(function (ap) {
+      if (!ap) { _rows[r].id = 'N/F'; _rows[r].dist = '—'; _grid.setData(_rows); _fetching[r] = false; statMsg('R' + (r + 1) + ': ' + code + ' not found', true); return; }
+      var st = ap.data;
+      return fetchData(ap.icao, st.network || 'BR__ASOS').then(function (csv) {
+        if (!csv) { _rows[r].id = ap.icao; _rows[r].dist = 'N/D'; _grid.setData(_rows); _fetching[r] = false; statMsg('R' + (r + 1) + ': ' + ap.icao + ' — no data', true); return; }
+        var obs = parseCSV(csv);
+        if (!obs.length) { _rows[r].id = ap.icao; _rows[r].dist = 'N/O'; _grid.setData(_rows); _fetching[r] = false; statMsg('R' + (r + 1) + ': ' + ap.icao + ' — no obs', true); return; }
+
+        var lat = st.lat || 0;
+        var seas = seasonMonths(lat);
+        var allMonths = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+
+        var ann = filterObs(obs, tStart, tEnd, allMonths);
+        var sum = filterObs(obs, tStart, tEnd, seas.sum);
+        var aut = filterObs(obs, tStart, tEnd, seas.aut);
+        var win = filterObs(obs, tStart, tEnd, seas.win);
+        var spr = filterObs(obs, tStart, tEnd, seas.spr);
+
+        var fmt = function (v) { return isNaN(v) ? '\u2014' : v.toFixed(1); };
+
+        row.at = fmt(avg(ann.map(function (o) { return o.tmpc; })));
+        row.ap = fmt(avg(ann.map(function (o) { return o.qnh; })));
+        row.stt = fmt(avg(sum.map(function (o) { return o.tmpc; })));
+        row.sp = fmt(avg(sum.map(function (o) { return o.qnh; })));
+        row.autt = fmt(avg(aut.map(function (o) { return o.tmpc; })));
+        row.autp = fmt(avg(aut.map(function (o) { return o.qnh; })));
+        row.wt = fmt(avg(win.map(function (o) { return o.tmpc; })));
+        row.wp = fmt(avg(win.map(function (o) { return o.qnh; })));
+        row.sprt = fmt(avg(spr.map(function (o) { return o.tmpc; })));
+        row.sprp = fmt(avg(spr.map(function (o) { return o.qnh; })));
+
+        row.id = ap.icao;
+        var distNM = 0;
+        var enteredIcao = (_iata2icao && _iata2icao[code]) ? _iata2icao[code] : code;
+        if (ap.icao !== enteredIcao) {
+          var srcAp = (_airports && _airports[enteredIcao]) ? _airports[enteredIcao] : null;
+          if (srcAp) distNM = haversineKm(srcAp.lat, srcAp.lon, lat, st.lon || 0) * 0.539957;
+        }
+        row.dist = distNM.toFixed(0) + ' NM';
+
+        row._ready = true;
+        _grid.setData(_rows);
+        _fetching[r] = false;
+        statMsg('R' + (r + 1) + ': ' + ap.icao + ' done (' + ann.length + ' obs)');
+      });
+    }).catch(function (err) {
+      _fetching[r] = false;
+      statMsg('R' + (r + 1) + ': Error — ' + (err.message || 'fetch failed'), true);
+    });
+  }
+
+  function parseTime(s) {
+    s = String(s).trim();
+    var m = s.match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return null;
+    var h = parseInt(m[1], 10), min = parseInt(m[2], 10);
+    if (h < 0 || h > 23 || min < 0 || min > 59) return null;
+    return h * 60 + min;
+  }
+
+  /* debounced row trigger */
+  var _triggers = {};
+  function triggerRow(r) {
+    clearTimeout(_triggers[r]);
+    _triggers[r] = setTimeout(function () { processRow(r); }, 400);
+  }
+
+  /* init grid */
+  function initGrid() {
+    _grid = window.GRID.mount(document.getElementById('results-grid'), {
+      data: _rows,
+      columns: [
+        { key: 'input',  label: '', width: 72 },
+        { key: 'rel',    label: '', width: 54 },
+        { key: 'tstart', label: '', width: 64 },
+        { key: 'tend',   label: '', width: 64 },
+        { key: 'at',     label: '', width: 62 },
+        { key: 'ap',     label: '', width: 66 },
+        { key: 'stt',    label: '', width: 62 },
+        { key: 'sp',     label: '', width: 66 },
+        { key: 'autt',   label: '', width: 62 },
+        { key: 'autp',   label: '', width: 66 },
+        { key: 'wt',     label: '', width: 62 },
+        { key: 'wp',     label: '', width: 66 },
+        { key: 'sprt',   label: '', width: 62 },
+        { key: 'sprp',   label: '', width: 66 },
+        { key: 'id',     label: '', width: 68 },
+        { key: 'dist',   label: '', width: 72 }
+      ],
+      height: 500,
+      readonly: false,
+      statusBar: false,
+      onDataChange: function (changes) {
+        var touched = {};
+        changes.forEach(function (ch) {
+          if (ch.c <= 3) { // input columns
+            touched[ch.r] = true;
+          }
+        });
+        Object.keys(touched).forEach(function (r) {
+          var row = _rows[parseInt(r, 10)];
+          if (row.input && row.rel && row.tstart && row.tend) {
+            triggerRow(parseInt(r, 10));
+          }
+        });
+      }
+    });
+  }
+
+  initGrid();
+  loadAirports();
+
+})();
+</script>
 </body>
 </html>
