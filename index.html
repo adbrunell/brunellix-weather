@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="description" content="Analyze historical airport weather data from the Iowa Environmental Mesonet. Statistical temperature, pressure, and wind analysis by ICAO code.">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://adbrunell.github.io/brunellix-weather/">
+<title>BrunelliX Weather — Aerodrome Climatology</title>
+<link rel="stylesheet" href="grid-core.css">
+<style>
+/* ═══ Reset & Tokens ═══ */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-size:16px;-webkit-text-size-adjust:100%}
+
+:root{
+  --bg:#f8f9fa;--surface:#ffffff;--text:#202124;--text-dim:#5f6368;
+  --accent:#1a73e8;--accent-hover:#1557b0;--accent-ring:rgba(26,115,232,0.24);
+  --success:#188038;--warning:#e37400;--error:#d93025;
+  --border:#dadce0;--border-light:#e8eaed;
+  --radius:8px;--radius-sm:6px;
+  --shadow-sm:0 1px 3px rgba(0,0,0,0.08);
+  --font:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --mono:'SF Mono','Fira Code','Consolas',monospace;
+}
+
+body{
+  font-family:var(--font);font-size:0.875rem;line-height:1.5;
+  color:var(--text);background:var(--bg);
+  min-height:100vh;min-height:100dvh;
+  display:flex;flex-direction:column;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ═══ Header ═══ */
+.header{
+  background:var(--surface);border-bottom:1px solid var(--border);
+  padding:0 1rem;height:3.5rem;display:flex;align-items:center;
+  position:sticky;top:0;z-index:50;
+}
+.header-title{
+  font-size:1.125rem;font-weight:700;letter-spacing:-0.01em;
+  color:var(--text);
+}
+.header-title span{color:var(--accent)}
+
+/* ═══ Main ═══ */
+.main{
+  flex:1;padding:1rem;max-width:64rem;width:100%;margin:0 auto;
+  display:flex;flex-direction:column;gap:1rem;
+}
+
+/* ═══ Form ═══ */
+.form-panel{
+  background:var(--surface);border-radius:var(--radius);
+  border:1px solid var(--border);padding:1.25rem;
+}
+.form-title{font-size:1rem;font-weight:600;margin-bottom:0.125rem}
+.form-desc{font-size:0.8125rem;color:var(--text-dim);margin-bottom:1rem}
+
+.form-row{
+  display:flex;flex-wrap:wrap;gap:0.625rem;align-items:flex-end;
+}
+.form-field{display:flex;flex-direction:column;gap:0.25rem;min-width:5rem;flex:1}
+.form-field label{font-size:0.75rem;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.04em}
+.form-field input, .form-field select{
+  height:2.75rem;padding:0 0.625rem;font-size:0.9375rem;font-family:var(--font);
+  border:1px solid var(--border);border-radius:var(--radius-sm);
+  background:var(--surface);color:var(--text);outline:none;
+  transition:border-color 0.15s,box-shadow 0.15s;
+  min-width:0;width:100%;
+}
+.form-field input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-ring)}
+.form-field input:invalid:not(:placeholder-shown){border-color:var(--error)}
+
+.btn{
+  height:2.75rem;padding:0 1.5rem;font-size:0.9375rem;font-weight:600;
+  font-family:var(--font);border:none;border-radius:var(--radius-sm);
+  cursor:pointer;transition:background 0.15s,box-shadow 0.15s;
+  display:inline-flex;align-items:center;gap:0.5rem;white-space:nowrap;
+  outline:none;
+}
+.btn:focus-visible{box-shadow:0 0 0 3px var(--accent-ring)}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:var(--accent-hover)}
+.btn-primary:active{background:#12479b}
+.btn-primary:disabled{opacity:0.5;cursor:not-allowed}
+
+/* ═══ Status ═══ */
+.status{
+  padding:0.75rem 1rem;border-radius:var(--radius-sm);
+  font-size:0.8125rem;display:none;align-items:center;gap:0.5rem;
+}
+.status.visible{display:flex}
+.status-loading{background:#e8f0fe;color:#174ea6}
+.status-error{background:#fce8e6;color:#a50e0e}
+.status-done{background:#e6f4ea;color:#137333}
+
+.spinner{
+  width:1rem;height:1rem;border:2px solid currentColor;
+  border-top-color:transparent;border-radius:50%;
+  animation:spin 0.6s linear infinite;flex-shrink:0;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ═══ Station Info ═══ */
+.station-info{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);padding:1rem 1.25rem;
+  display:none;flex-wrap:wrap;gap:0.5rem 1.5rem;align-items:center;
+}
+.station-info.visible{display:flex}
+.station-name{font-weight:700;font-size:1.125rem}
+.station-meta{font-size:0.8125rem;color:var(--text-dim)}
+.station-source{
+  font-size:0.75rem;margin-left:auto;padding:0.25rem 0.5rem;
+  border-radius:10rem;font-weight:600;
+}
+.source-github{background:#e8f0fe;color:#174ea6}
+.source-iem{background:#fef7e0;color:#9a6d04}
+.source-cache{background:#e6f4ea;color:#137333}
+
+/* ═══ Results ═══ */
+.results-wrap{display:none;flex-direction:column;gap:0.75rem}
+.results-wrap.visible{display:flex}
+
+/* Mobile: data cards */
+.mobile-cards{display:flex;flex-direction:column;gap:0.5rem}
+@media (min-width:768px){.mobile-cards{display:none}}
+
+.data-card{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);padding:1rem;
+}
+.data-card-label{font-size:0.75rem;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.04em}
+.data-card-value{font-size:1.5rem;font-weight:700;font-family:var(--mono);margin-top:0.125rem}
+.data-card-detail{font-size:0.8125rem;color:var(--text-dim);margin-top:0.125rem}
+.data-card-range{font-size:0.75rem;color:var(--text-dim);margin-top:0.25rem}
+
+/* Desktop: grid */
+.desktop-grid{display:none}
+@media (min-width:768px){.desktop-grid{display:block}}
+
+/* ═══ Empty state ═══ */
+.empty-state{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:3rem 1rem;text-align:center;gap:0.75rem;
+}
+.empty-state.visible{display:flex}
+.empty-state svg{width:3rem;height:3rem;color:var(--text-dim);opacity:0.5}
+.empty-title{font-size:1rem;font-weight:600}
+.empty-desc{font-size:0.8125rem;color:var(--text-dim);max-width:20rem}
+
+/* ═══ Footer ═══ */
+.footer{
+  padding:0.75rem 1rem;text-align:center;
+  font-size:0.6875rem;color:var(--text-dim);
+  border-top:1px solid var(--border-light);margin-top:auto;
+}
+.footer a{color:var(--accent);text-decoration:none}
+.footer a:hover{text-decoration:underline}
+
+/* ═══ Responsive ═══ */
+@media (min-width:768px){
+  .main{padding:1.5rem}
+  .form-row{gap:0.75rem}
+  .form-panel{padding:1.5rem}
+}
+@media (min-width:1024px){
+  .main{padding:2rem}
+}
+</style>
+</head>
+<body>
+
+<!-- THESIS: Aviation weather analysis as a single-page tool. Refuses dashboard sprawl in
+     favor of one focused form-to-result flow. OWN-WORLD: Restrained operative palette,
+     white surfaces, aviation-blue accent, system sans. STORY: A pilot enters an ICAO code,
+     selects a reliability level and time window, and receives statistical temperature,
+     pressure, and wind for that slot across a decade of history. FIRST VIEWPORT: Compact
+     form panel with five fields and one primary button, empty results area with
+     instructional state below. FORM: 2nd candidate (data-dense utility), seed 3b2f4a.
+     FINISH: unreviewed and undocumented is unfinished; this build ends with the finish
+     review, the verdict, and DESIGN.md -->
+
+<header class="header">
+  <div class="header-title">BrunelliX <span>Weather</span></div>
+</header>
+
+<main class="main">
+
+  <div class="form-panel" id="form-panel">
+    <div class="form-title">Aerodrome Climatology</div>
+    <div class="form-desc">Historical weather statistics for airport performance planning.</div>
+    <form id="main-form" autocomplete="off" novalidate>
+      <div class="form-row">
+        <div class="form-field" style="max-width:7rem">
+          <label for="icao">ICAO Code</label>
+          <input type="text" id="icao" placeholder="SBGL" maxlength="4" required
+                 style="text-transform:uppercase;font-family:var(--mono)">
+        </div>
+        <div class="form-field" style="max-width:6rem">
+          <label for="reliability">Reliability</label>
+          <input type="number" id="reliability" value="85" min="50" max="99" required>
+        </div>
+        <div class="form-field" style="max-width:7rem">
+          <label for="time-start">Time (UTC)</label>
+          <div style="display:flex;gap:0.25rem;align-items:center">
+            <input type="time" id="time-start" value="00:00" required style="flex:1">
+            <span style="color:var(--text-dim);font-size:0.75rem">–</span>
+            <input type="time" id="time-end" value="23:00" required style="flex:1">
+          </div>
+        </div>
+        <div class="form-field" style="max-width:5rem">
+          <label for="year-start">Year</label>
+          <input type="number" id="year-start" value="2015" min="1900" max="2025" required>
+        </div>
+        <div class="form-field" style="max-width:5rem">
+          <label for="year-end">&nbsp;</label>
+          <input type="number" id="year-end" value="2025" min="1900" max="2025" required>
+        </div>
+        <button type="submit" class="btn btn-primary" id="btn-analyze">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          Analyze
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <div class="status" id="status-bar">
+    <div class="spinner" id="status-spinner"></div>
+    <span id="status-text"></span>
+  </div>
+
+  <div class="station-info" id="station-info">
+    <div>
+      <div class="station-name" id="st-name"></div>
+      <div class="station-meta" id="st-meta"></div>
+    </div>
+    <div class="station-source" id="st-source"></div>
+  </div>
+
+  <div class="results-wrap" id="results-wrap">
+    <!-- Mobile cards -->
+    <div class="mobile-cards" id="mobile-cards"></div>
+    <!-- Desktop grid -->
+    <div class="desktop-grid" id="desktop-grid"></div>
+  </div>
+
+  <!-- Empty state (shown before first query) -->
+  <div class="empty-state visible" id="empty-state">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+      <path d="M12 3c-4.5 0-8.25 3.36-8.25 7.5 0 1.69.68 3.23 1.81 4.41.82.85 1.29 1.94 1.29 3.09v1.5a.75.75 0 00.75.75h8.8a.75.75 0 00.75-.75V18c0-1.15.47-2.24 1.29-3.09A7.15 7.15 0 0020.25 10.5C20.25 6.36 16.5 3 12 3z"/>
+      <path d="M9.75 19.5a2.25 2.25 0 004.5 0"/>
+    </svg>
+    <div class="empty-title">Enter an ICAO code to begin</div>
+    <div class="empty-desc">Analyze historical temperature, pressure, and wind data for any airport worldwide.</div>
+  </div>
+
+</main>
+
+<footer class="footer">
+  Data sourced from <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener">Iowa Environmental Mesonet</a>
+  &middot; <a href="https://github.com/adbrunell/brunellix-weather" target="_blank" rel="noopener">adbrunell/brunellix-weather</a>
+</footer>
+
+<script src="grid-core.js"></script>
+<script>
+(function(){
+'use strict';
+
+/* ═══ CONFIG ═══ */
+var GITHUB_RAW = 'https://raw.githubusercontent.com/adbrunell/brunellix-weather/main/data';
+var IEM_ASOS   = 'https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py';
+var IEM_GEOJSON = 'https://mesonet.agron.iastate.edu/geojson/network';
+var ICAO_PREFIX = {SB:'BR__ASOS',SA:'AR__ASOS',SC:'CL__ASOS',SP:'PE__ASOS',SE:'EC__ASOS',SV:'VE__ASOS',K:'US_ASOS',PA:'US_ASOS',PH:'US_ASOS',EG:'GB__ASOS',LF:'FR__ASOS',LE:'ES__ASOS',ED:'DE__ASOS',LI:'IT__ASOS',LP:'PT__ASOS',EH:'NL__ASOS',LO:'AT__ASOS',LS:'CH__ASOS',LR:'RO__ASOS',LD:'HR__ASOS',LY:'RS__ASOS',UM:'BY__ASOS',UU:'RU__ASOS',LT:'TR__ASOS',OL:'LB__ASOS',OE:'SA__ASOS',OM:'AE__ASOS',OT:'QA__ASOS',OK:'KW__ASOS',OB:'BH__ASOS',OO:'OM__ASOS',OJ:'JO__ASOS',HE:'EG__ASOS',DT:'TN__ASOS',DA:'DZ__ASOS',GM:'MA__ASOS',GO:'SN__ASOS',DF:'BF__ASOS',DI:'CI__ASOS',DN:'NG__ASOS',DR:'NE__ASOS',FT:'TD__ASOS',FE:'CF__ASOS',FO:'GA__ASOS',FK:'CM__ASOS',FC:'CG__ASOS',FN:'AO__ASOS',FL:'ZM__ASOS',FV:'ZW__ASOS',FB:'BW__ASOS',FA:'ZA__ASOS',FY:'NA__ASOS',HK:'KE__ASOS',HA:'ET__ASOS',HD:'DJ__ASOS',HC:'SO__ASOS',HT:'TZ__ASOS',HU:'UG__ASOS',FW:'MW__ASOS',FQ:'MZ__ASOS',FM:'MG__ASOS',FI:'MU__ASOS',FP:'ST__ASOS',FG:'GQ__ASOS',RK:'KR__ASOS',RJ:'JP__ASOS',RO:'JP__ASOS',RP:'PH__ASOS',VT:'TH__ASOS',VV:'VN__ASOS',WM:'MY__ASOS',WI:'ID__ASOS',WS:'SG__ASOS',VH:'HK__ASOS',ZL:'CN__ASOS',ZU:'CN__ASOS',ZW:'CN__ASOS',ZY:'CN__ASOS',ZB:'CN__ASOS',ZP:'CN__ASOS',VY:'MM__ASOS',VN:'NP__ASOS',VQ:'BT__ASOS',VC:'LK__ASOS',VE:'IN__ASOS',VI:'IN__ASOS',VO:'IN__ASOS',OP:'PK__ASOS',OA:'AF__ASOS',UT:'TJ__ASOS',UA:'KZ__ASOS',UB:'AZ__ASOS',UG:'GE__ASOS',UD:'AM__ASOS',NZ:'__ASOS'};
+var CACHE_DB = 'iem_cache';
+var CACHE_STORE = 'observations';
+var CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
+var YEAR_MIN = 1900, YEAR_MAX = 2025;
+
+/* ═══ DOM refs ═══ */
+var $ = function(id){return document.getElementById(id);};
+var form = $('main-form');
+var btnAnalyze = $('btn-analyze');
+var statusBar = $('status-bar');
+var statusText = $('status-text');
+var statusSpinner = $('status-spinner');
+var stationInfo = $('station-info');
+var resultsWrap = $('results-wrap');
+var mobileCards = $('mobile-cards');
+var desktopGrid = $('desktop-grid');
+var emptyState = $('empty-state');
+
+/* ═══ IndexedDB Cache ═══ */
+function openCache(){
+  return new Promise(function(resolve, reject){
+    var req = indexedDB.open(CACHE_DB, 1);
+    req.onupgradeneeded = function(e){
+      if(!e.target.result.objectStoreNames.contains(CACHE_STORE)){
+        e.target.result.createObjectStore(CACHE_STORE, {keyPath:'key'});
+      }
+    };
+    req.onsuccess = function(){resolve(req.result);};
+    req.onerror = function(){reject(req.error);};
+  });
+}
+
+function getCached(key){
+  return openCache().then(function(db){
+    return new Promise(function(resolve){
+      var tx = db.transaction(CACHE_STORE,'readonly');
+      var req = tx.objectStore(CACHE_STORE).get(key);
+      req.onsuccess = function(){
+        var r = req.result;
+        if(r && (Date.now() - r.ts) < CACHE_TTL) resolve(r.csv);
+        else resolve(null);
+      };
+      req.onerror = function(){resolve(null);};
+    });
+  }).catch(function(){return null;});
+}
+
+function setCached(key, csv){
+  return openCache().then(function(db){
+    return new Promise(function(resolve){
+      var tx = db.transaction(CACHE_STORE,'readwrite');
+      tx.objectStore(CACHE_STORE).put({key:key, csv:csv, ts:Date.now()});
+      tx.oncomplete = function(){resolve();};
+    });
+  }).catch(function(){});
+}
+
+/* ═══ Station Resolver ═══ */
+function resolveStation(icao){
+  return fetch(GITHUB_RAW + '/stations.json')
+    .then(function(r){return r.ok ? r.json() : [];})
+    .then(function(local){
+      var found = local.find(function(s){return s.icao === icao;});
+      if(found) return found;
+      var prefix = icao.substring(0,2);
+      var network = ICAO_PREFIX[prefix] || ICAO_PREFIX[icao.substring(0,1)] || 'AZOS';
+      var url = IEM_GEOJSON + '/' + (network === 'AZOS' ? 'AZOS' : network) + '.geojson';
+      return fetch(url).then(function(r){return r.json();}).then(function(geo){
+        var feat = geo.features.find(function(f){return f.properties.sid === icao;});
+        if(feat){
+          return {
+            icao:icao, name:feat.properties.sname||icao,
+            lat:feat.geometry.coordinates[1], lon:feat.geometry.coordinates[0],
+            elev_m:feat.properties.elevation||0, network:network,
+            begin:(feat.properties.archive_begin||'unknown')
+          };
+        }
+        return findNearest(icao, geo.features, network);
+      });
+    });
+}
+
+function findNearest(targetIcao, features, network){
+  if(!features.length) return null;
+  return fetch(IEM_GEOJSON + '/' + network + '.geojson')
+    .then(function(r){return r.json();})
+    .then(function(geo){
+      var best = null, bestDist = Infinity;
+      geo.features.forEach(function(f){
+        var d = haversine(0,0,f.geometry.coordinates[1],f.geometry.coordinates[0]);
+        if(d < bestDist){bestDist = d; best = f;}
+      });
+      if(best){
+        return {
+          icao:best.properties.sid, name:best.properties.sname||best.properties.sid,
+          lat:best.geometry.coordinates[1], lon:best.geometry.coordinates[0],
+          elev_m:best.properties.elevation||0, network:network,
+          begin:(best.properties.archive_begin||'unknown'),
+          nearestTo:targetIcao, distKm:Math.round(bestDist)
+        };
+      }
+      return null;
+    });
+}
+
+function haversine(lat1,lon1,lat2,lon2){
+  var R=6371,dLat=(lat2-lat1)*Math.PI/180,dLon=(lon2-lon1)*Math.PI/180;
+  var a=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)*Math.sin(dLon/2);
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
+/* ═══ Data Fetcher ═══ */
+function fetchStationData(station, y1, y2){
+  var cacheKey = station.icao + '_' + y1 + '_' + y2;
+  return getCached(cacheKey).then(function(cached){
+    if(cached){
+      showStationSource('cache');
+      return cached;
+    }
+    return fetchFromGitHub(station.icao, y1, y2).then(function(csv){
+      if(csv){showStationSource('github');return csv;}
+      return fetchFromIEM(station.icao, y1, y2).then(function(csv){
+        showStationSource('iem');
+        return csv;
+      });
+    }).then(function(csv){
+      if(csv) setCached(cacheKey, csv);
+      return csv;
+    });
+  });
+}
+
+function fetchFromGitHub(icao, y1, y2){
+  var promises = [];
+  for(var y = y1; y <= y2; y++){
+    promises.push(
+      fetch(GITHUB_RAW + '/' + icao + '/' + y + '.csv')
+        .then(function(r){return r.ok ? r.text() : '';})
+        .catch(function(){return '';})
+    );
+  }
+  return Promise.all(promises).then(function(chunks){
+    var valid = chunks.filter(function(c){return c && c.trim();});
+    if(!valid.length) return null;
+    var header = valid[0].split('\n')[0];
+    var bodies = valid.map(function(c){
+      var lines = c.split('\n');
+      return lines.slice(lines[0] === header ? 1 : 0).join('\n');
+    });
+    return header + '\n' + bodies.join('\n');
+  });
+}
+
+function fetchFromIEM(icao, y1, y2){
+  return new Promise(function(resolve){
+    var cols = 'tmpf,dwpf,alti,mslp,drct,sknt,gust';
+    var url = IEM_ASOS + '?station=' + icao +
+      '&data=' + cols +
+      '&year1=' + y1 + '&month1=1&day1=1' +
+      '&year2=' + y2 + '&month2=12&day2=31' +
+      '&report_type=3&tz=Etc/UTC&format=onlycomma';
+    fetch(url).then(function(r){
+      if(!r.ok) throw new Error('IEM returned ' + r.status);
+      return r.text();
+    }).then(resolve).catch(function(e){
+      resolve(null);
+    });
+  });
+}
+
+/* ═══ CSV Parser ═══ */
+function parseCSV(csv){
+  var lines = csv.trim().split('\n');
+  if(lines.length < 2) return [];
+  var headers = lines[0].split(',').map(function(h){return h.trim();});
+  return lines.slice(1).map(function(line){
+    var vals = line.split(',');
+    var obj = {};
+    headers.forEach(function(h,i){obj[h]=vals[i]&&vals[i].trim();});
+    return obj;
+  }).filter(function(r){return r.valid && r.station;});
+}
+
+/* ═══ Time Filter ═══ */
+function filterByTime(rows, startHHMM, endHHMM){
+  var sH=parseInt(startHHMM.split(':')[0],10), sM=parseInt(startHHMM.split(':')[1],10);
+  var eH=parseInt(endHHMM.split(':')[0],10), eM=parseInt(endHHMM.split(':')[1],10);
+  var sMin = sH*60+sM, eMin = eH*60+eM;
+  return rows.filter(function(r){
+    var t = r.valid.match(/[T ](\d{2}):(\d{2})/);
+    if(!t) return false;
+    var min = parseInt(t[1],10)*60 + parseInt(t[2],10);
+    if(sMin <= eMin) return min >= sMin && min <= eMin;
+    return min >= sMin || min <= eMin;
+  });
+}
+
+/* ═══ Statistics Engine ═══ */
+function computeStats(rows, reliability){
+  var pct = reliability/100;
+  var z = zScore(pct);
+
+  /* Extract values */
+  function extract(field, converter){
+    return rows.map(function(r){
+      var v = r[field];
+      if(!v || v === 'M') return NaN;
+      return converter ? converter(parseFloat(v)) : parseFloat(v);
+    }).filter(function(v){return !isNaN(v);});
+  }
+
+  var tmpf = extract('tmpf');
+  var tmpc = tmpf.map(function(v){return (v-32)*5/9;});
+  var altiIn = extract('alti');
+  var qnh = altiIn.map(function(v){return v*33.8639;});
+  var sknt = extract('sknt');
+  var gust = extract('gust');
+  var drct = extract('drct');
+
+  function basicStats(arr){
+    if(!arr.length) return {mu:NaN,sigma:NaN,n:0,se:NaN,ci:[NaN,NaN],min:NaN,max:NaN};
+    var n=arr.length, mu=arr.reduce(function(s,v){return s+v;},0)/n;
+    var sigma=Math.sqrt(arr.reduce(function(s,v){return s+(v-mu)*(v-mu);},0)/n);
+    var se=sigma/Math.sqrt(n), ciLo=mu-z*se, ciHi=mu+z*se;
+    var min=arr[0],max=arr[0];
+    for(var i=1;i<n;i++){if(arr[i]<min)min=arr[i];if(arr[i]>max)max=arr[i];}
+    return {mu:mu,sigma:sigma,n:n,se:se,ci:[ciLo,ciHi],min:min,max:max};
+  }
+
+  function circularStats(degArr){
+    if(!degArr.length) return {dir:NaN,R:NaN,n:0,sector:'-'};
+    var n=degArr.length;
+    var rad=degArr.map(function(d){return d*Math.PI/180;});
+    var sinSum=rad.reduce(function(s,v){return s+Math.sin(v);},0);
+    var cosSum=rad.reduce(function(s,v){return s+Math.cos(v);},0);
+    var R=Math.sqrt(sinSum*sinSum+cosSum*cosSum)/n;
+    var dir=Math.atan2(sinSum,cosSum)*180/Math.PI;
+    if(dir<0) dir+=360;
+    var sectors=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+    return {dir:dir,R:R,n:n,sector:sectors[Math.round(dir/22.5)%16]};
+  }
+
+  var tStats=basicStats(tmpc);
+  var qStats=basicStats(qnh);
+  var wStats=basicStats(sknt);
+  var dStats=circularStats(drct);
+  var gustN=gust.filter(function(v){return !isNaN(v) && v>0;}).length;
+  var gustP=sknt.length ? (gustN/sknt.length*100) : 0;
+
+  return {
+    temp:tStats, pressure:qStats, windSpeed:wStats,
+    windDir:dStats, gustP:gustP,
+    totalObs:rows.length, validObs:sknt.length,
+    z:z, reliability:reliability
+  };
+}
+
+function zScore(pct){
+  var zTable={
+    0.50:0,0.55:0.125,0.60:0.253,0.65:0.385,0.70:0.524,
+    0.75:0.674,0.80:0.842,0.85:1.036,0.90:1.282,0.95:1.645,
+    0.99:2.326,0.995:2.576
+  };
+  if(zTable[pct]!==undefined)return zTable[pct];
+  var keys=Object.keys(zTable).map(Number).sort();
+  var hi=keys.find(function(k){return k>=pct;})||0.995;
+  var lo=keys[keys.indexOf(hi)-1]||0.50;
+  var t=(pct-lo)/(hi-lo);
+  return zTable[lo]+t*(zTable[hi]-zTable[lo]);
+}
+
+/* ═══ UI Controller ═══ */
+function showStatus(type, msg){
+  statusBar.className = 'status visible status-'+type;
+  statusText.textContent = msg;
+  statusSpinner.style.display = type==='loading' ? '' : 'none';
+}
+function hideStatus(){statusBar.className='status';}
+
+function showStationSource(src){
+  var el=$('st-source');
+  el.textContent = src==='github'?'GitHub Archive':src==='iem'?'IEM Live':'Local Cache';
+  el.className='station-source '+(
+    src==='github'?'source-github':src==='iem'?'source-iem':'source-cache');
+}
+
+function renderStationInfo(st){
+  $('st-name').textContent=(st.nearestTo?('Nearest to '+st.nearestTo+' ('+(st.distKm||'?')+'km): '):'')+st.icao+' — '+st.name;
+  $('st-meta').textContent='Lat '+st.lat.toFixed(2)+' / Lon '+st.lon.toFixed(2)+' | Elev '+st.elev_m+'m | Network '+st.network+' | Archive since '+st.begin;
+  stationInfo.classList.add('visible');
+}
+
+function renderStats(stats){
+  resultsWrap.classList.add('visible');
+  emptyState.classList.remove('visible');
+
+  var fmt=function(v,d){return isNaN(v)?'—':v.toFixed(d);};
+  var fmtCI=function(ci,d){return isNaN(ci[0])?'—':fmt(ci[0],d)+' – '+fmt(ci[1],d);};
+
+  /* Mobile cards */
+  var cards=[
+    {label:'Temperature (°C)',value:fmt(stats.temp.mu,1),detail:'IC '+stats.reliability+'%: '+fmtCI(stats.temp.ci,1),range:'Min '+fmt(stats.temp.min,1)+' / Max '+fmt(stats.temp.max,1)},
+    {label:'Pressure QNH (hPa)',value:fmt(stats.pressure.mu,1),detail:'IC '+stats.reliability+'%: '+fmtCI(stats.pressure.ci,1),range:'Min '+fmt(stats.pressure.min,1)+' / Max '+fmt(stats.pressure.max,1)},
+    {label:'Wind Direction',value:stats.windDir.sector+' ('+fmt(stats.windDir.dir,0)+'°)',detail:'Mean resultant R='+fmt(stats.windDir.R,2),range:'n='+stats.windDir.n},
+    {label:'Wind Speed (kt)',value:fmt(stats.windSpeed.mu,1),detail:'IC '+stats.reliability+'%: '+fmtCI(stats.windSpeed.ci,1),range:'Max '+fmt(stats.windSpeed.max,1)+' kt'},
+    {label:'Gust Probability',value:fmt(stats.gustP,1)+'%',detail:stats.gustP>30?'Frequent gusts':stats.gustP>10?'Occasional gusts':'Rare gusts',range:''}
+  ];
+  mobileCards.innerHTML = cards.map(function(c){
+    return '<div class="data-card"><div class="data-card-label">'+c.label+'</div><div class="data-card-value">'+c.value+'</div><div class="data-card-detail">'+c.detail+'</div><div class="data-card-range">'+c.range+'</div></div>';
+  }).join('');
+
+  /* Desktop grid */
+  var gridData = [
+    {variable:'Temperature',unit:'°C',mean:fmt(stats.temp.mu,1),ci:fmtCI(stats.temp.ci,1),min:fmt(stats.temp.min,1),max:fmt(stats.temp.max,1),n:stats.temp.n},
+    {variable:'Pressure QNH',unit:'hPa',mean:fmt(stats.pressure.mu,1),ci:fmtCI(stats.pressure.ci,1),min:fmt(stats.pressure.min,1),max:fmt(stats.pressure.max,1),n:stats.pressure.n},
+    {variable:'Wind Direction',unit:'°',mean:fmt(stats.windDir.dir,0)+' ('+stats.windDir.sector+')',ci:'—',min:'—',max:'—',n:stats.windDir.n},
+    {variable:'Wind Speed',unit:'kt',mean:fmt(stats.windSpeed.mu,1),ci:fmtCI(stats.windSpeed.ci,1),min:fmt(stats.windSpeed.min,1),max:fmt(stats.windSpeed.max,1),n:stats.windSpeed.n},
+    {variable:'Gust Prob.',unit:'%',mean:fmt(stats.gustP,1),ci:'—',min:'—',max:'—',n:stats.windSpeed.n}
+  ];
+
+  if(window._gridInstance){
+    window._gridInstance.setData(gridData);
+  } else {
+    window._gridInstance = window.GRID.mount(desktopGrid, {
+      data: gridData,
+      columns: [
+        {key:'variable',label:'Variable',width:140},
+        {key:'unit',label:'Unit',width:60},
+        {key:'mean',label:'Mean μ',width:100},
+        {key:'ci',label:'CI '+stats.reliability+'%',width:140},
+        {key:'min',label:'Min',width:70},
+        {key:'max',label:'Max',width:70},
+        {key:'n',label:'N',width:70}
+      ],
+      height: 220,
+      readonly: true,
+      statusBar: false
+    });
+  }
+}
+
+function setLoading(isLoading){
+  btnAnalyze.disabled = isLoading;
+  btnAnalyze.innerHTML = isLoading ?
+    '<div class="spinner"></div> Loading…' :
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg> Analyze';
+}
+
+/* ═══ Form Handler ═══ */
+form.addEventListener('submit', function(e){
+  e.preventDefault();
+
+  var icao = $('icao').value.trim().toUpperCase();
+  var reliability = parseInt($('reliability').value,10);
+  var tStart = $('time-start').value;
+  var tEnd = $('time-end').value;
+  var y1 = parseInt($('year-start').value,10);
+  var y2 = parseInt($('year-end').value,10);
+
+  if(!icao){showStatus('error','Please enter an ICAO code');return;}
+  if(isNaN(reliability)||reliability<50||reliability>99){showStatus('error','Reliability must be 50–99%');return;}
+  if(!tStart||!tEnd){showStatus('error','Please select a time range');return;}
+  if(y1>y2){var t=y1;y1=y2;y2=t;}
+
+  setLoading(true);
+  showStatus('loading','Resolving station '+icao+'…');
+  stationInfo.classList.remove('visible');
+  resultsWrap.classList.remove('visible');
+  mobileCards.innerHTML = '';
+  if(window._gridInstance) window._gridInstance.setData([]);
+
+  resolveStation(icao).then(function(station){
+    if(!station){
+      hideStatus();
+      showStatus('error','Station '+icao+' not found in IEM. Try another ICAO code.');
+      setLoading(false);
+      return;
+    }
+    showStatus('loading','Downloading '+station.icao+' data ('+y1+'–'+y2+')…');
+    return fetchStationData(station, y1, y2).then(function(csv){
+      if(!csv){
+        hideStatus();
+        showStatus('error','No data available for '+station.icao+' ('+y1+'–'+y2+')');
+        setLoading(false);
+        return;
+      }
+      showStatus('loading','Processing observations…');
+      renderStationInfo(station);
+
+      var rows = parseCSV(csv);
+      var filtered = filterByTime(rows, tStart, tEnd);
+      var stats = computeStats(filtered, reliability);
+
+      renderStats(stats);
+      hideStatus();
+      showStatus('done','Done. '+stats.validObs+' valid obs in '+tStart+'–'+tEnd+' UTC, '+y1+'–'+y2+'.');
+      setLoading(false);
+    });
+  }).catch(function(err){
+    hideStatus();
+    showStatus('error','Failed: '+(err.message||'Unknown error'));
+    setLoading(false);
+  });
+});
+
+/* ═══ Init ═══ */
+$('icao').addEventListener('input',function(){this.value=this.value.toUpperCase();});
+
+})();
+</script>
+</body>
+</html>
