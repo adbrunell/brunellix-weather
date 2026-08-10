@@ -103,13 +103,13 @@
 
   function resolveAirport(code) {
     code = code.trim().toUpperCase();
-    if (!code) return null;
+    if (!code) return Promise.resolve(null);
 
-    if (_airports && _airports[code]) return { icao: code, data: _airports[code] };
+    if (_airports && _airports[code]) return Promise.resolve({ icao: code, data: _airports[code] });
 
     if (_iata2icao && _iata2icao[code]) {
       var icao = _iata2icao[code];
-      if (_airports && _airports[icao]) return { icao: icao, data: _airports[icao] };
+      if (_airports && _airports[icao]) return Promise.resolve({ icao: icao, data: _airports[icao] });
       code = icao;
     }
 
@@ -195,9 +195,11 @@
   }
 
   function fetchFromIEM(station, y1, y2) {
+    var sd = station && station.data;
+    if (!sd) return Promise.resolve(null);
     return new Promise(function (resolve) {
       var cols = 'tmpf,dwpf,alti,mslp,drct,sknt,gust';
-      var network = station.data.network || 'BR__ASOS';
+      var network = sd.network || 'BR__ASOS';
       var url = IEM_ASOS + '?station=' + encodeURIComponent(station.icao) +
         '&network=' + encodeURIComponent(network) +
         '&data=' + cols +
@@ -441,43 +443,40 @@
     var code = $('icao').value.trim();
     if (!code) { $('empty-state').classList.add('visible'); return; }
 
-    var resolved = resolveAirport(code);
-    if (!resolved) {
-      showStatus('error', 'Airport \u201C' + code + '\u201D not found. Try an ICAO code like SBGL or IATA code like GIG.');
-      return;
-    }
-
-    var icao = resolved.icao;
-
-    if (icao === _lastQueryIcao && _rawRows) {
-      // Same station, just recalculate
-      _currentStation = resolved;
-      renderStationInfo(resolved);
-      recalc();
-      return;
-    }
-
-    // New station — download
-    setLoading(true);
-    showStatus('loading', 'Downloading ' + icao + ' data (' + formatYearRange() + ')...');
-    $('station-info').classList.remove('visible');
-    $('results-wrap').classList.remove('visible');
-    $('mobile-cards').innerHTML = '';
-    if (window._gridInstance) window._gridInstance.setData([]);
-
-    fetchStationData(resolved).then(function (csv) {
-      setLoading(false);
-      if (!csv) {
-        showStatus('error', 'No data available for ' + icao + '. The IEM archive may not have records for this station.');
+    resolveAirport(code).then(function (resolved) {
+      if (!resolved) {
+        showStatus('error', 'Airport \u201C' + code + '\u201D not found. Try an ICAO code like SBGL or IATA code like GIG.');
         return;
       }
 
-      _rawRows = parseCSV(csv);
-      _currentStation = resolved;
-      _lastQueryIcao = icao;
+      var icao = resolved.icao;
 
-      renderStationInfo(resolved);
-      recalc();
+      if (icao === _lastQueryIcao && _rawRows) {
+        _currentStation = resolved;
+        renderStationInfo(resolved);
+        recalc();
+        return;
+      }
+
+      setLoading(true);
+      showStatus('loading', 'Downloading ' + icao + ' data (' + formatYearRange() + ')...');
+      $('station-info').classList.remove('visible');
+      $('results-wrap').classList.remove('visible');
+      $('mobile-cards').innerHTML = '';
+      if (window._gridInstance) window._gridInstance.setData([]);
+
+      return fetchStationData(resolved).then(function (csv) {
+        setLoading(false);
+        if (!csv) {
+          showStatus('error', 'No data available for ' + icao + '. The IEM archive may not have records for this station.');
+          return;
+        }
+        _rawRows = parseCSV(csv);
+        _currentStation = resolved;
+        _lastQueryIcao = icao;
+        renderStationInfo(resolved);
+        recalc();
+      });
     }).catch(function (err) {
       setLoading(false);
       showStatus('error', 'Failed: ' + (err.message || 'Unknown error'));
